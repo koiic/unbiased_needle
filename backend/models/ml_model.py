@@ -1,15 +1,31 @@
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 # One line of FastAPI imports here later 👈
-from sqlmodel import Field, Session, SQLModel, create_engine, select
+from sqlmodel import Column, Field, JSON, Session, SQLModel, create_engine, select
 
 
-class Model(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    name: str
-    description: Optional[str] = None
+
+class ModelBase(SQLModel):
+    name: str = Field(index=True)
+    description: Optional[str] = Field(default=None, index=True)
     datasource_id: int
+    tag_names: List[str] = Field(sa_column=Column(JSON))
+
+class Model(ModelBase, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+class ModelCreate(ModelBase):
+    pass
+
+class ModelRead(ModelBase):
+    id: int
+
+class ModelUpdate(SQLModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    datasource_id: Optional[int] = None
+    tag_names: Optional[List[str]] = None
 
 
 class ModelVersion(SQLModel, table=True):

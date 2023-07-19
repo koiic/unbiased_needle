@@ -3,18 +3,20 @@ import json
 import os
 import re
 import tempfile
-from collections import OrderedDict
-from enum import Enum
-from datetime import datetime
-
 import uuid
+from collections import OrderedDict
+from datetime import datetime
+from enum import Enum
+from typing import List
 
 import boto3
-from fastapi import APIRouter, Depends
+from database import engine
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
+from models.ml_model import Model, ModelCreate, ModelRead, ModelUpdate, ModelVersion
 from sagemaker.pytorch import PyTorch
-
+from sqlmodel import Session, select
 
 merlion_router = APIRouter()
 
@@ -31,10 +33,6 @@ async def default_parameters(algorithm_name: str):
         "LSTMED",
         "AutoEncoder",
     ], "Algorithm name not found"
-
-    # model_class = ModelFactory.get_model_class(algorithm_name)
-
-    # init_method = model_class.config_class.__init__
 
     if algorithm_name == "VAE":
         json_encoded_data = {
@@ -100,12 +98,45 @@ async def create_algorithm(
     return JSONResponse(parameters)
 
 
-@merlion_router.post("/evaluate/{algorithm_name}")
-async def create_model(
-    algorithm_id: int,
-    datasource_id: int,
-):
-    pass
+@merlion_router.post("/models/", response_model=ModelRead)
+def create_model(model: ModelCreate):
+    with Session(engine) as session:
+        db_model = Model.from_orm(model)
+        session.add(db_model)
+        session.commit()
+        session.refresh(db_model)
+        return db_model
+
+
+@merlion_router.get("/models/", response_model=List[ModelRead])
+def read_modeles(offset: int = 0, limit: int = Query(default=100, lte=100)):
+    with Session(engine) as session:
+        modeles = session.exec(select(Model).offset(offset).limit(limit)).all()
+        return modeles
+
+
+@merlion_router.get("/models/{model_id}", response_model=ModelRead)
+def read_model(model_id: int):
+    with Session(engine) as session:
+        model = session.get(Model, model_id)
+        if not model:
+            raise HTTPException(status_code=404, detail="Model not found")
+        return model
+
+
+@merlion_router.patch("/models/{model_id}", response_model=ModelRead)
+def update_model(model_id: int, model: ModelUpdate):
+    with Session(engine) as session:
+        db_model = session.get(Model, model_id)
+        if not db_model:
+            raise HTTPException(status_code=404, detail="Model not found")
+        model_data = model.dict(exclude_unset=True)
+        for key, value in model_data.items():
+            setattr(db_model, key, value)
+        session.add(db_model)
+        session.commit()
+        session.refresh(db_model)
+        return db_model
 
 
 @merlion_router.post("/train/{model_id}")
@@ -148,7 +179,8 @@ async def train_model(
     # )
 
     source_dir = f"s3://{bucket_name}/code/{object_name}"  # because on S3
-    output_path = f"s3://{bucket_name}/{tmp_dirname}/"
+    # output_path = f"s3://{bucket_name}/{tmp_dirname}/"
+    output_path = f"s3://{bucket_name}/"
 
     # Create a PyTorch estimator
 
@@ -201,6 +233,25 @@ async def get_train_status(model_name: str):
     # The response contains all the information about the training job
     return JSONResponse({"status": response["TrainingJobStatus"]})
 
+@merlion_router.get("/deploy/{model_name}")
+async def deploy_model_version(model_name: str):
+    sagemaker_client = boto3.client("sagemaker")
+
+    # Suppose 'your_training_job_name' is the name of your training job
+    response = sagemaker_client.describe_training_job(TrainingJobName=model_name)
+
+    # The response contains all the information about the training job
+    return JSONResponse({"status": response["TrainingJobStatus"]})
+
+@merlion_router.get("/undeploy/{model_name}")
+async def undeploy_model_version(model_name: str):
+    sagemaker_client = boto3.client("sagemaker")
+
+    # Suppose 'your_training_job_name' is the name of your training job
+    response = sagemaker_client.describe_training_job(TrainingJobName=model_name)
+
+    # The response contains all the information about the training job
+    return JSONResponse({"status": response["TrainingJobStatus"]})
 
 @merlion_router.post("/predict/{model_id}")
 def predict(model_id: int, data: dict):
