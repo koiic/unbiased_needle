@@ -139,8 +139,6 @@ async def train_model(
 
     # s3 = boto3.client("s3")
 
-    # # status = s3.Bucket(bucket_name).upload_file(model_data_path, "model.tar.gz")
-    # object_name = "model.tar.gz"
     # print(f"{bucket_name}/{tmp_dirname}")
 
     # s3.copy_object(
@@ -176,7 +174,7 @@ async def train_model(
 
     estimator = PyTorch(
         entry_point="script.py",
-        source_dir="s3://maio-sagemaker/main/model.tar.gz",
+        source_dir=source_dir,
         role=aws_role,
         instance_count=1,
         instance_type=instance_type,
