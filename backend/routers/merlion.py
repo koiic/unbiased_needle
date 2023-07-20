@@ -14,16 +14,20 @@ from database import engine
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
-from models.ml_model import Model, ModelCreate, ModelRead, ModelUpdate, ModelVersion
+from models.ml_model import (
+    Model,
+    ModelCreate,
+    ModelRead,
+    ModelUpdate,
+    ModelVersion,
+    ModelVersionCreate,
+    ModelVersionRead,
+    ModelVersionUpdate,
+)
 from sagemaker.pytorch import PyTorch
 from sqlmodel import Session, select
 
 merlion_router = APIRouter()
-
-
-@merlion_router.get("/algorithms")
-async def algoritms():
-    return ["VAE", "LSTMED", "AutoEncoder"]
 
 
 @merlion_router.get("/default_parameters/{algorithm_name}")
@@ -81,23 +85,6 @@ async def default_parameters(algorithm_name: str):
     return JSONResponse(content=json_encoded_data)
 
 
-@merlion_router.post("/algorithm/{algorithm_name}")
-async def create_algorithm(
-    algorithm_name: str, parameters: dict = Depends(default_parameters)
-):
-    if algorithm_name == "VAE":
-        pass
-        # model = ModelFactory.create("VAE", **parameters)
-    elif algorithm_name == "LSTMED":
-        pass
-    elif algorithm_name == "AutoEncoder":
-        pass
-    else:
-        raise Exception("Algorithm not found")
-
-    return JSONResponse(parameters)
-
-
 @merlion_router.post("/models/", response_model=ModelRead)
 def create_model(model: ModelCreate):
     with Session(engine) as session:
@@ -109,7 +96,7 @@ def create_model(model: ModelCreate):
 
 
 @merlion_router.get("/models/", response_model=List[ModelRead])
-def read_modeles(offset: int = 0, limit: int = Query(default=100, lte=100)):
+def read_models(offset: int = 0, limit: int = Query(default=100, lte=100)):
     with Session(engine) as session:
         modeles = session.exec(select(Model).offset(offset).limit(limit)).all()
         return modeles
@@ -139,120 +126,197 @@ def update_model(model_id: int, model: ModelUpdate):
         return db_model
 
 
-@merlion_router.post("/train/{model_id}")
-async def train_model(
-    model_id: int,
-    datasource_id: int,
-    start_datetime: datetime,
-    end_datetime: datetime,
-    maio_token: str = None,
-    train_test_split: float = 0.8,
-):
-    # Build model data file
-    # create a tmp filename
-    tmp_dirname = uuid.uuid4().hex
-
-    model_data_path = os.getenv("MODEL_DATA_PATH", None)
-    aws_role = os.getenv("AWS_ROLE", None)
-    instance_type = os.getenv("INSTANCE_TYPE", None)
-
-    print(f"aws_role: {aws_role}")
-    print(f"instance_type: {instance_type}")
-    print(f"model_data_path: {model_data_path}")
-
-    # upload the model data to S3
-    m = re.search("//(.+)/", model_data_path)
-    if m:
-        bucket_name = m.group(1)
-    print(f"bucket_name: {bucket_name}")
-
-    object_name = "code.tar.gz"
-
-    # s3 = boto3.client("s3")
-
-    # print(f"{bucket_name}/{tmp_dirname}")
-
-    # s3.copy_object(
-    #     CopySource=f"{bucket_name}/main/{object_name}",  # /Bucket-name/path/filename
-    #     Bucket=bucket_name,  # Destination bucket
-    #     Key=f"{tmp_dirname}/{object_name}",  # Destination path/filename
-    # )
-
-    source_dir = f"s3://{bucket_name}/code/{object_name}"  # because on S3
-    # output_path = f"s3://{bucket_name}/{tmp_dirname}/"
-    output_path = f"s3://{bucket_name}/"
-
-    # Create a PyTorch estimator
-
-    # Get parameters from the algorithm
-    algoritm_name = "LSTMED"
-
-    print(f"source_dir: {source_dir}")
-    print(f"output_path: {output_path}")
-
-    hyperparameters = {
-        "algorithm_name": algoritm_name,
-        "epochs": 10,
-        "batch_size": 32,
-        "learning_rate": 0.01,
-        "maio_instance_str": "heineken",
-        "maio_token": maio_token,
-        "datasource_id": datasource_id,
-        "start_datetime": start_datetime.strftime("%Y-%m-%d_%H:%M:%S"),
-        "end_datetime": end_datetime.strftime("%Y-%m-%d_%H:%M:%S"),
-        "features": "CoolerTemp BathTemp CoolerSwitch RefridgentTemp CompressorCurrent",
-        "train_test_split": train_test_split,
-    }
-
-    estimator = PyTorch(
-        entry_point="script.py",
-        source_dir=source_dir,
-        role=aws_role,
-        instance_count=1,
-        instance_type=instance_type,
-        framework_version="2.0.0",
-        py_version="py310",
-        hyperparameters=hyperparameters,
-        output_path=output_path,
-    )
-
-    estimator.fit(wait=False)
-
-    return JSONResponse(
-        {"status": True, "job_name": estimator.latest_training_job.job_name}
-    )
+@merlion_router.post("/model_versions/", response_model=ModelVersionRead)
+def create_model_versions(model_version: ModelVersionCreate):
+    with Session(engine) as session:
+        db_model_version = ModelVersion.from_orm(model_version)
+        session.add(db_model_version)
+        session.commit()
+        session.refresh(db_model_version)
+        return db_model_version
 
 
-@merlion_router.get("/train/{model_name}/status")
-async def get_train_status(model_name: str):
+@merlion_router.get("/model_versions/", response_model=List[ModelVersionRead])
+def read_model_versions(offset: int = 0, limit: int = Query(default=100, lte=100)):
+    with Session(engine) as session:
+        model_versions = session.exec(
+            select(ModelVersion).offset(offset).limit(limit)
+        ).all()
+        return model_versions
+
+
+@merlion_router.get(
+    "/model_versions/{model_version_id}", response_model=ModelVersionRead
+)
+def read_model_version(model_version_id: int):
+    with Session(engine) as session:
+        model_version = session.get(ModelVersion, model_version_id)
+        if not model_version:
+            raise HTTPException(status_code=404, detail="ModelVersion not found")
+        return model_version
+
+
+@merlion_router.patch(
+    "/model_versions/{model_version_id}", response_model=ModelVersionRead
+)
+def update_model_version(model_version_id: int, model_version: ModelVersionUpdate):
+    with Session(engine) as session:
+        db_model_version = session.get(ModelVersion, model_version_id)
+        if not db_model_version:
+            raise HTTPException(status_code=404, detail="ModelVersion not found")
+        model_version_data = model_version.dict(exclude_unset=True)
+        for key, value in model_version_data.items():
+            print(f"key: {key}, value: {value}")
+            setattr(db_model_version, key, value)
+        session.add(db_model_version)
+        session.commit()
+        session.refresh(db_model_version)
+        return db_model_version
+
+
+@merlion_router.post(
+    "/model_versions/{model_version_id}/train", response_model=ModelVersionRead
+)
+async def train_model_version(model_version_id: int):
+    with Session(engine) as session:
+        db_model_version = session.get(ModelVersion, model_version_id)
+        if not db_model_version:
+            raise HTTPException(status_code=404, detail="ModelVersion not found")
+
+        if db_model_version.job_name is not None:
+            raise HTTPException(status_code=404, detail="ModelVersion already trained")
+
+        db_model = session.get(Model, db_model_version.model_id)
+        if not db_model:
+            raise HTTPException(status_code=404, detail="Model not found")
+
+        keys = db_model_version.algorithm_parameters.keys()
+
+        hyperparameters = dict()
+        hyperparameters["algorithm_name"] = db_model_version.algorithm_name
+        if "maio_instance_str" not in keys:
+            raise HTTPException(status_code=404, detail="maio_instance_str not found")
+        hyperparameters["maio_instance_str"] = db_model_version.algorithm_parameters[
+            "maio_instance_str"
+        ]
+        if "maio_token" not in keys:
+            raise HTTPException(status_code=404, detail="maio_token not found")
+        hyperparameters["maio_token"] = db_model_version.algorithm_parameters[
+            "maio_token"
+        ]
+        hyperparameters["datasource_id"] = db_model_version.datasource_id
+        hyperparameters["start_datetime"] = db_model_version.start_datetime.strftime(
+            "%Y-%m-%d_%H:%M:%S"
+        )
+        hyperparameters["end_datetime"] = db_model_version.end_datetime.strftime(
+            "%Y-%m-%d_%H:%M:%S"
+        )
+        hyperparameters["features"] = db_model.tag_names
+        hyperparameters["train_test_split"] = db_model_version.train_test_split
+
+        tmp_dirname = uuid.uuid4().hex
+
+        model_data_path = os.getenv("MODEL_DATA_PATH", None)
+        aws_role = os.getenv("AWS_ROLE", None)
+        instance_type = os.getenv("INSTANCE_TYPE", None)
+
+        # upload the model data to S3
+        m = re.search("//(.+)/", model_data_path)
+        if m:
+            bucket_name = m.group(1)
+        print(f"bucket_name: {bucket_name}")
+
+        object_name = "code.tar.gz"
+
+        source_dir = f"s3://{bucket_name}/code/{object_name}"  # because on S3
+        output_path = f"s3://{bucket_name}/"
+
+        # Get parameters from the algorithm
+
+        estimator = PyTorch(
+            entry_point="script.py",
+            source_dir=source_dir,
+            role=aws_role,
+            instance_count=1,
+            instance_type=instance_type,
+            framework_version="2.0.0",
+            py_version="py310",
+            hyperparameters=hyperparameters,
+            output_path=output_path,
+        )
+
+        estimator.fit(wait=False)
+
+        db_model_version.job_name = estimator.latest_training_job.job_name
+
+        # setattr(db_model_version, key, value)
+        session.add(db_model_version)
+        session.commit()
+        session.refresh(db_model_version)
+
+        return db_model_version
+
+
+@merlion_router.get("/model_versions/{model_version_id}/status")
+async def get_train_status(model_version_id: int):
     sagemaker_client = boto3.client("sagemaker")
 
-    # Suppose 'your_training_job_name' is the name of your training job
-    response = sagemaker_client.describe_training_job(TrainingJobName=model_name)
+    with Session(engine) as session:
+        db_model = session.get(ModelVersion, model_version_id)
+        if not db_model:
+            raise HTTPException(status_code=404, detail="ModelVersion not found")
 
-    # The response contains all the information about the training job
-    return JSONResponse({"status": response["TrainingJobStatus"]})
+    sm_job_name = db_model.job_name
 
-@merlion_router.get("/deploy/{model_name}")
-async def deploy_model_version(model_name: str):
+    job_status = "NotStarted"
+    if sm_job_name is not None:
+        # Suppose 'your_training_job_name' is the name of your training job
+        response = sagemaker_client.describe_training_job(TrainingJobName=sm_job_name)
+        job_status = response["TrainingJobStatus"]
+
+    return JSONResponse({"status": job_status})
+
+
+@merlion_router.get("/model_versions/{model_version_id}/deploy")
+async def deploy_model_version(model_version_id: int):
     sagemaker_client = boto3.client("sagemaker")
 
-    # Suppose 'your_training_job_name' is the name of your training job
-    response = sagemaker_client.describe_training_job(TrainingJobName=model_name)
+    with Session(engine) as session:
+        db_model = session.get(ModelVersion, model_version_id)
+        if not db_model:
+            raise HTTPException(status_code=404, detail="ModelVersion not found")
 
-    # The response contains all the information about the training job
-    return JSONResponse({"status": response["TrainingJobStatus"]})
+    sm_job_name = db_model.job_name
 
-@merlion_router.get("/undeploy/{model_name}")
-async def undeploy_model_version(model_name: str):
+    job_status = "NotStarted"
+    if sm_job_name is not None:
+        # Suppose 'your_training_job_name' is the name of your training job
+        response = sagemaker_client.describe_training_job(TrainingJobName=sm_job_name)
+        job_status = response["TrainingJobStatus"]
+
+    return JSONResponse({"status": job_status})
+
+
+@merlion_router.get("/model_versions/{model_version_id}/undeploy")
+async def undeploy_model_version(model_version_id: int):
     sagemaker_client = boto3.client("sagemaker")
 
-    # Suppose 'your_training_job_name' is the name of your training job
-    response = sagemaker_client.describe_training_job(TrainingJobName=model_name)
+    with Session(engine) as session:
+        db_model = session.get(ModelVersion, model_version_id)
+        if not db_model:
+            raise HTTPException(status_code=404, detail="ModelVersion not found")
 
-    # The response contains all the information about the training job
-    return JSONResponse({"status": response["TrainingJobStatus"]})
+    sm_job_name = db_model.job_name
 
-@merlion_router.post("/predict/{model_id}")
-def predict(model_id: int, data: dict):
+    job_status = "NotStarted"
+    if sm_job_name is not None:
+        # Suppose 'your_training_job_name' is the name of your training job
+        response = sagemaker_client.describe_training_job(TrainingJobName=sm_job_name)
+        job_status = response["TrainingJobStatus"]
+
+    return JSONResponse({"status": job_status})
+
+
+@merlion_router.post("/model_versions/{model_version_id}/predict")
+def predict(model_version_id: int, data: dict):
     pass
