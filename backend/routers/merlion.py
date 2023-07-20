@@ -1,5 +1,6 @@
 import inspect
 import json
+import logging
 import os
 import re
 import tempfile
@@ -22,8 +23,8 @@ from models.ml_model import (
     ModelVersion,
     ModelVersionCreate,
     ModelVersionRead,
-    ModelVersionUpdate,
     ModelVersionStatus,
+    ModelVersionUpdate,
 )
 from sagemaker.pytorch import PyTorch, PyTorchModel
 from sqlmodel import Session, select
@@ -257,7 +258,7 @@ async def train_model_version(model_version_id: int):
 
 
 @merlion_router.get("/model_versions/{model_version_id}/status")
-async def get_train_status(model_version_id: int):
+async def get_model_version_status(model_version_id: int):
     sagemaker_client = boto3.client("sagemaker")
 
     with Session(engine) as session:
@@ -273,6 +274,7 @@ async def get_train_status(model_version_id: int):
         response = sagemaker_client.describe_training_job(TrainingJobName=sm_job_name)
         model_version_status = f"Training{response['TrainingJobStatus']}"
 
+    endpoint_status = None
     if model_version_status == ModelVersionStatus.TrainingCompleted:
         try:
             response = sagemaker_client.describe_endpoint(EndpointName=sm_job_name)
@@ -287,6 +289,16 @@ async def get_train_status(model_version_id: int):
 
 @merlion_router.get("/model_versions/{model_version_id}/deploy")
 async def deploy_model_version(model_version_id: int):
+    model_version_status = await get_model_version_status(model_version_id)
+
+    data = json.loads(model_version_status.body)
+
+    if data["status"] != ModelVersionStatus.TrainingCompleted:
+        raise HTTPException(
+            status_code=404,
+            detail="ModelVersion not trained yet. Please train the model first.",
+        )
+
     sagemaker_client = boto3.client("sagemaker")
 
     with Session(engine) as session:
@@ -322,6 +334,16 @@ async def deploy_model_version(model_version_id: int):
 
 @merlion_router.get("/model_versions/{model_version_id}/undeploy")
 async def undeploy_model_version(model_version_id: int):
+    model_version_status = await get_model_version_status(model_version_id)
+
+    data = json.loads(model_version_status.body)
+
+    if data["status"] != ModelVersionStatus.InServiceEndpoint:
+        raise HTTPException(
+            status_code=404,
+            detail="ModelVersion not deployed yet. Please deploy the model first.",
+        )
+
     sagemaker_client = boto3.client("sagemaker")
 
     with Session(engine) as session:
@@ -331,13 +353,9 @@ async def undeploy_model_version(model_version_id: int):
 
     sm_job_name = db_model.job_name
 
-    job_status = "NotStarted"
-    if sm_job_name is not None:
-        # Suppose 'your_training_job_name' is the name of your training job
-        response = sagemaker_client.describe_training_job(TrainingJobName=sm_job_name)
-        job_status = response["TrainingJobStatus"]
+    sagemaker_client.delete_endpoint(EndpointName=sm_job_name)
 
-    return JSONResponse({"status": job_status})
+    return JSONResponse({"status": ModelVersionStatus.DeletingEndpoint})
 
 
 @merlion_router.post("/model_versions/{model_version_id}/predict")
