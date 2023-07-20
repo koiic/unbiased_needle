@@ -23,8 +23,9 @@ from models.ml_model import (
     ModelVersionCreate,
     ModelVersionRead,
     ModelVersionUpdate,
+    ModelVersionStatus,
 )
-from sagemaker.pytorch import PyTorch
+from sagemaker.pytorch import PyTorch, PyTorchModel
 from sqlmodel import Session, select
 
 merlion_router = APIRouter()
@@ -211,10 +212,8 @@ async def train_model_version(model_version_id: int):
         hyperparameters["end_datetime"] = db_model_version.end_datetime.strftime(
             "%Y-%m-%d_%H:%M:%S"
         )
-        hyperparameters["features"] = db_model.tag_names
+        hyperparameters["features"] = " ".join(db_model.tag_names)
         hyperparameters["train_test_split"] = db_model_version.train_test_split
-
-        tmp_dirname = uuid.uuid4().hex
 
         model_data_path = os.getenv("MODEL_DATA_PATH", None)
         aws_role = os.getenv("AWS_ROLE", None)
@@ -268,13 +267,22 @@ async def get_train_status(model_version_id: int):
 
     sm_job_name = db_model.job_name
 
-    job_status = "NotStarted"
+    model_version_status = ModelVersionStatus.TrainingNotStarted
     if sm_job_name is not None:
         # Suppose 'your_training_job_name' is the name of your training job
         response = sagemaker_client.describe_training_job(TrainingJobName=sm_job_name)
-        job_status = response["TrainingJobStatus"]
+        model_version_status = f"Training{response['TrainingJobStatus']}"
 
-    return JSONResponse({"status": job_status})
+    if model_version_status == ModelVersionStatus.TrainingCompleted:
+        try:
+            response = sagemaker_client.describe_endpoint(EndpointName=sm_job_name)
+            endpoint_status = f"Endpoint{response['EndpointStatus']}"
+        except:
+            endpoint_status = None
+
+    return JSONResponse(
+        {"status": model_version_status if endpoint_status is None else endpoint_status}
+    )
 
 
 @merlion_router.get("/model_versions/{model_version_id}/deploy")
@@ -288,13 +296,28 @@ async def deploy_model_version(model_version_id: int):
 
     sm_job_name = db_model.job_name
 
-    job_status = "NotStarted"
-    if sm_job_name is not None:
-        # Suppose 'your_training_job_name' is the name of your training job
-        response = sagemaker_client.describe_training_job(TrainingJobName=sm_job_name)
-        job_status = response["TrainingJobStatus"]
+    model_data_path = os.getenv("MODEL_DATA_PATH", None)
+    aws_role = os.getenv("AWS_ROLE", None)
+    instance_type = os.getenv("INSTANCE_TYPE", None)
 
-    return JSONResponse({"status": job_status})
+    # Specify the S3 location of your model.tar.gz file
+    model_data = f"{model_data_path}{sm_job_name}/output/model.tar.gz"
+
+    # Create a PyTorchModel object
+    model = PyTorchModel(
+        model_data=model_data,
+        role=aws_role,
+        framework_version="2.0.0",
+        py_version="py310",
+    )
+
+    predictor = model.deploy(
+        initial_instance_count=1,
+        instance_type=instance_type,
+        endpoint_name=sm_job_name,
+    )
+
+    return JSONResponse({"status": ModelVersionStatus.CreatingEndpoint})
 
 
 @merlion_router.get("/model_versions/{model_version_id}/undeploy")

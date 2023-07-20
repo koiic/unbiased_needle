@@ -49,6 +49,19 @@ class AlgorithmName(str, Enum):
     VAE = "VAE"
 
 
+class ModelVersionStatus(str, Enum):
+    TrainingNotStarted = "TraininNotStarted"
+    TrainingInProgress = "TrainingInProgress"
+    TrainingCompleted = "TrainingCompleted"
+    TrainingFailed = "TrainingFailed"
+    CreatingEndpoint = "CreatingEndpoint"
+    UpdatingEndpoint = "UpdatingEndpoint"
+    RollingBackEndpoint = "RollingBackEndpoint"
+    InServiceEndpoint = "InServiceEndpoint"
+    DeletingEndpoint = "DeletingEndpoint"
+    FailedEndpoint = "FailedEndpoint"
+
+
 class ModelVersionBase(SQLModel):
     name: str
     job_name: Optional[str] = Field(default=None, index=True)
