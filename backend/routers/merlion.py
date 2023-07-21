@@ -101,8 +101,8 @@ def create_model(model: ModelCreate):
 @merlion_router.get("/models/", response_model=List[ModelRead])
 def read_models(offset: int = 0, limit: int = Query(default=100, lte=100)):
     with Session(engine) as session:
-        modeles = session.exec(select(Model).offset(offset).limit(limit)).all()
-        return modeles
+        models = session.exec(select(Model).offset(offset).limit(limit)).all()
+        return models
 
 
 @merlion_router.get("/models/{model_id}", response_model=ModelRead)
@@ -110,7 +110,7 @@ def read_model(model_id: int):
     with Session(engine) as session:
         model = session.get(Model, model_id)
         if not model:
-            raise HTTPException(status_code=404, detail="Model not found")
+            raise HTTPException(status_code=500, detail="Model not found")
         return model
 
 
@@ -119,7 +119,7 @@ def update_model(model_id: int, model: ModelUpdate):
     with Session(engine) as session:
         db_model = session.get(Model, model_id)
         if not db_model:
-            raise HTTPException(status_code=404, detail="Model not found")
+            raise HTTPException(status_code=500, detail="Model not found")
         model_data = model.dict(exclude_unset=True)
         for key, value in model_data.items():
             setattr(db_model, key, value)
@@ -155,7 +155,7 @@ def read_model_version(model_version_id: int):
     with Session(engine) as session:
         model_version = session.get(ModelVersion, model_version_id)
         if not model_version:
-            raise HTTPException(status_code=404, detail="ModelVersion not found")
+            raise HTTPException(status_code=500, detail="ModelVersion not found")
         return model_version
 
 
@@ -166,7 +166,7 @@ def update_model_version(model_version_id: int, model_version: ModelVersionUpdat
     with Session(engine) as session:
         db_model_version = session.get(ModelVersion, model_version_id)
         if not db_model_version:
-            raise HTTPException(status_code=404, detail="ModelVersion not found")
+            raise HTTPException(status_code=500, detail="ModelVersion not found")
         model_version_data = model_version.dict(exclude_unset=True)
         for key, value in model_version_data.items():
             print(f"key: {key}, value: {value}")
@@ -184,26 +184,26 @@ async def train_model_version(model_version_id: int):
     with Session(engine) as session:
         db_model_version = session.get(ModelVersion, model_version_id)
         if not db_model_version:
-            raise HTTPException(status_code=404, detail="ModelVersion not found")
+            raise HTTPException(status_code=500, detail="ModelVersion not found")
 
         if db_model_version.job_name is not None:
-            raise HTTPException(status_code=404, detail="ModelVersion already trained")
+            raise HTTPException(status_code=500, detail="ModelVersion already trained")
 
         db_model = session.get(Model, db_model_version.model_id)
         if not db_model:
-            raise HTTPException(status_code=404, detail="Model not found")
+            raise HTTPException(status_code=500, detail="Model not found")
 
         keys = db_model_version.algorithm_parameters.keys()
 
         hyperparameters = dict()
         hyperparameters["algorithm_name"] = db_model_version.algorithm_name
         if "maio_instance_str" not in keys:
-            raise HTTPException(status_code=404, detail="maio_instance_str not found")
+            raise HTTPException(status_code=500, detail="maio_instance_str not found")
         hyperparameters["maio_instance_str"] = db_model_version.algorithm_parameters[
             "maio_instance_str"
         ]
         if "maio_token" not in keys:
-            raise HTTPException(status_code=404, detail="maio_token not found")
+            raise HTTPException(status_code=500, detail="maio_token not found")
         hyperparameters["maio_token"] = db_model_version.algorithm_parameters[
             "maio_token"
         ]
@@ -262,6 +262,18 @@ async def train_model_version(model_version_id: int):
 
 @merlion_router.get("/model_versions/{model_version_id}/status")
 async def get_model_version_status(model_version_id: int):
+    """get model_version status from sagemaker directly to avoid having
+    to keep the db in sync with sagemaker
+
+    Args:
+        model_version_id (int): the id of the model version
+
+    Raises:
+        HTTPException: 500 if the model version is not found
+
+    Returns:
+        ModelVersionStatus: the status of the model version
+    """
     instance_type = os.getenv("INSTANCE_TYPE", None)
 
     if instance_type == "local":
@@ -272,7 +284,7 @@ async def get_model_version_status(model_version_id: int):
     with Session(engine) as session:
         db_model = session.get(ModelVersion, model_version_id)
         if not db_model:
-            raise HTTPException(status_code=404, detail="ModelVersion not found")
+            raise HTTPException(status_code=500, detail="ModelVersion not found")
 
     sm_job_name = db_model.job_name
 
@@ -309,22 +321,25 @@ async def get_model_version_status(model_version_id: int):
 
 @merlion_router.get("/model_versions/{model_version_id}/deploy")
 async def deploy_model_version(model_version_id: int):
+    # Getting status of the model version
     model_version_status = await get_model_version_status(model_version_id)
-
     data = json.loads(model_version_status.body)
 
+    # If the model version is not trained yet, we cannot deploy it
     if data["status"] != ModelVersionStatus.TrainingCompleted:
         raise HTTPException(
-            status_code=404,
+            status_code=500,
             detail="ModelVersion not trained yet. Please train the model first.",
         )
 
+    # Getting the sagemaker client
     sagemaker_client = boto3.client("sagemaker")
 
+    # Getting the model version of given id
     with Session(engine) as session:
         db_model = session.get(ModelVersion, model_version_id)
         if not db_model:
-            raise HTTPException(status_code=404, detail="ModelVersion not found")
+            raise HTTPException(status_code=500, detail="ModelVersion not found")
 
     sm_job_name = db_model.job_name
 
@@ -348,7 +363,7 @@ async def deploy_model_version(model_version_id: int):
         framework_version="2.0.0",
         py_version="py310",
     )
-
+    # Deploy the model to Amazon SageMaker
     predictor = model.deploy(
         initial_instance_count=1,
         instance_type=instance_type,
@@ -360,27 +375,30 @@ async def deploy_model_version(model_version_id: int):
 
 @merlion_router.get("/model_versions/{model_version_id}/undeploy")
 async def undeploy_model_version(model_version_id: int):
+    # Getting status of the model version
     model_version_status = await get_model_version_status(model_version_id)
-
     data = json.loads(model_version_status.body)
 
-    print(data["status"], ModelVersionStatus.InServiceEndpoint)
-
+    # If the model version is not trained yet, we cannot deploy it
     if data["status"] != ModelVersionStatus.InServiceEndpoint:
         raise HTTPException(
-            status_code=404,
+            status_code=500,
             detail="ModelVersion not deployed yet. Please deploy the model first.",
         )
 
+    # Getting the sagemaker client
     sagemaker_client = boto3.client("sagemaker")
 
+    # Getting the model version of given id
     with Session(engine) as session:
         db_model = session.get(ModelVersion, model_version_id)
         if not db_model:
-            raise HTTPException(status_code=404, detail="ModelVersion not found")
+            raise HTTPException(status_code=500, detail="ModelVersion not found")
 
+    # Getting the job name of the model version (the endpoint name will be the same)
     sm_job_name = db_model.job_name
 
+    # Deleting the endpoint
     sagemaker_client.delete_endpoint(EndpointName=sm_job_name)
     sagemaker_client.delete_endpoint_config(EndpointConfigName=sm_job_name)
 
@@ -395,53 +413,39 @@ async def model_versions_predict(model_version_id: int, dt: datetime):
 
     if data["status"] != ModelVersionStatus.InServiceEndpoint:
         raise HTTPException(
-            status_code=404,
+            status_code=500,
             detail="ModelVersion not deployed yet. Please deploy the model first.",
         )
 
-    model_version = await read_model_version(model_version_id)
+    # Getting the model version of given id
+    with Session(engine) as session:
+        model_version = session.get(ModelVersion, model_version_id)
+        if not model_version:
+            raise HTTPException(status_code=500, detail="ModelVersion not found")
 
-    if dt < model_version_db.end_datetime:
+    if dt < model_version.end_datetime:
         raise HTTPException(
-            status_code=404,
+            status_code=500,
             detail="dt is before end_datetime. Please provide a dt not in the training set.",
         )
 
-    sagemaker_client = boto3.client("sagemaker")
+    sagemaker_client = boto3.client("sagemaker-runtime")
 
-    # t2 = dt
-    # t1 = t2 - timedelta(minutes=256) # Because the model is trained on 256 minutes batches
+    payload = {
+        "datasource_id": model_version.datasource_id,
+        "datetime": dt.strftime("%Y-%m-%d %H:%M:%S"),
+        "batch_size": 256,
+    }
 
-    # _, df_maio = maio_client.get_tag_entries_for_gateway(gateway_id, t1, t2)
+    json_payload = json.dumps(payload)
 
-    # df_maio_small = df_maio[mapping_columns.keys()].rename(columns=mapping_columns)
-
-    # df_maio_small["timestamp"] = pd.to_datetime(df_maio_small["timestamp"])
-    # df_maio_small = df_maio_small.set_index("timestamp")
-
-    # print(f"{df_maio_small.shape[0]} over 257")
-
-    # # Resample the dataframe to 1 minute
-    # df_maio_small_resampled = df_maio_small.resample("1Min").mean()
-
-    # # Fill missing values with the previous value
-    # df_maio_small_resampled = df_maio_small_resampled.fillna(method="ffill")
-
-    # df_maio_small_resampled.reset_index(inplace=True)
-
-    # # # Reset the index
-    # # df_maio_small_resampled.set_index(inplace=True)
-
-    # # Drop the timestamp column
-    # df_maio_small_resampled.drop(columns=["timestamp"], axis=1, inplace=True)
-
-    # # Invoke the SM endpoint
-    # response = .invoke_endpoint(
-    #     EndpointName=model_version.job_name,
-    #     ContentType="application/json",
-    #     Accept="application/json",
-    #     Body=df_maio_small_resampled.to_json(orient="split", index=False),
-    # )
+    # Invoke the SM endpoint
+    response = sagemaker_client.invoke_endpoint(
+        EndpointName=model_version.job_name,
+        ContentType="application/json",
+        Accept="application/json",
+        Body=json_payload,
+    )
 
     # # Transform the response to a string
     # data = response["Body"].read().decode("utf-8")
