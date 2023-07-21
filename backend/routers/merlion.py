@@ -6,7 +6,7 @@ import re
 import tempfile
 import uuid
 from collections import OrderedDict
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 from typing import List
 
@@ -26,6 +26,7 @@ from models.ml_model import (
     ModelVersionStatus,
     ModelVersionUpdate,
 )
+import sagemaker
 from sagemaker.pytorch import PyTorch, PyTorchModel
 from sqlmodel import Session, select
 
@@ -244,8 +245,10 @@ async def train_model_version(model_version_id: int):
             hyperparameters=hyperparameters,
             output_path=output_path,
         )
-
-        estimator.fit(wait=False)
+        try:
+            estimator.fit(wait=False)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error: {e}")
 
         db_model_version.job_name = estimator.latest_training_job.job_name
 
@@ -259,7 +262,12 @@ async def train_model_version(model_version_id: int):
 
 @merlion_router.get("/model_versions/{model_version_id}/status")
 async def get_model_version_status(model_version_id: int):
-    sagemaker_client = boto3.client("sagemaker")
+    instance_type = os.getenv("INSTANCE_TYPE", None)
+
+    if instance_type == "local":
+        sagemaker_client = sagemaker.local.LocalSagemakerClient()
+    else:
+        sagemaker_client = boto3.client("sagemaker")
 
     with Session(engine) as session:
         db_model = session.get(ModelVersion, model_version_id)
@@ -270,15 +278,27 @@ async def get_model_version_status(model_version_id: int):
 
     model_version_status = ModelVersionStatus.TrainingNotStarted
     if sm_job_name is not None:
-        # Suppose 'your_training_job_name' is the name of your training job
-        response = sagemaker_client.describe_training_job(TrainingJobName=sm_job_name)
-        model_version_status = f"Training{response['TrainingJobStatus']}"
+        if instance_type == "local":
+            # This is a hack to get the status of the training job when running locally
+            try:
+                response = sagemaker_client.describe_training_job(
+                    TrainingJobName=sm_job_name
+                )
+            except Exception as e:
+                print(e)
+
+            model_version_status = ModelVersionStatus.TrainingCompleted
+        else:
+            response = sagemaker_client.describe_training_job(
+                TrainingJobName=sm_job_name
+            )
+            model_version_status = f"Training{response['TrainingJobStatus']}"
 
     endpoint_status = None
     if model_version_status == ModelVersionStatus.TrainingCompleted:
         try:
             response = sagemaker_client.describe_endpoint(EndpointName=sm_job_name)
-            endpoint_status = f"Endpoint{response['EndpointStatus']}"
+            endpoint_status = f"{response['EndpointStatus']}Endpoint"
         except:
             endpoint_status = None
 
@@ -313,12 +333,18 @@ async def deploy_model_version(model_version_id: int):
     instance_type = os.getenv("INSTANCE_TYPE", None)
 
     # Specify the S3 location of your model.tar.gz file
-    model_data = f"{model_data_path}{sm_job_name}/output/model.tar.gz"
+    if instance_type == "local":
+        model_data = f"{model_data_path}{sm_job_name}/model.tar.gz"
+    else:
+        model_data = f"{model_data_path}{sm_job_name}/output/model.tar.gz"
 
     # Create a PyTorchModel object
     model = PyTorchModel(
         model_data=model_data,
         role=aws_role,
+        entry_point="script.py",
+        source_dir="s3://maio-sagemaker/code/code.tar.gz",
+        code_location="s3://maio-sagemaker/code_location/",
         framework_version="2.0.0",
         py_version="py310",
     )
@@ -338,6 +364,8 @@ async def undeploy_model_version(model_version_id: int):
 
     data = json.loads(model_version_status.body)
 
+    print(data["status"], ModelVersionStatus.InServiceEndpoint)
+
     if data["status"] != ModelVersionStatus.InServiceEndpoint:
         raise HTTPException(
             status_code=404,
@@ -354,10 +382,70 @@ async def undeploy_model_version(model_version_id: int):
     sm_job_name = db_model.job_name
 
     sagemaker_client.delete_endpoint(EndpointName=sm_job_name)
+    sagemaker_client.delete_endpoint_config(EndpointConfigName=sm_job_name)
 
     return JSONResponse({"status": ModelVersionStatus.DeletingEndpoint})
 
 
 @merlion_router.post("/model_versions/{model_version_id}/predict")
-def predict(model_version_id: int, data: dict):
-    pass
+async def model_versions_predict(model_version_id: int, dt: datetime):
+    model_version_status = await get_model_version_status(model_version_id)
+
+    data = json.loads(model_version_status.body)
+
+    if data["status"] != ModelVersionStatus.InServiceEndpoint:
+        raise HTTPException(
+            status_code=404,
+            detail="ModelVersion not deployed yet. Please deploy the model first.",
+        )
+
+    model_version = await read_model_version(model_version_id)
+
+    if dt < model_version_db.end_datetime:
+        raise HTTPException(
+            status_code=404,
+            detail="dt is before end_datetime. Please provide a dt not in the training set.",
+        )
+
+    sagemaker_client = boto3.client("sagemaker")
+
+    # t2 = dt
+    # t1 = t2 - timedelta(minutes=256) # Because the model is trained on 256 minutes batches
+
+    # _, df_maio = maio_client.get_tag_entries_for_gateway(gateway_id, t1, t2)
+
+    # df_maio_small = df_maio[mapping_columns.keys()].rename(columns=mapping_columns)
+
+    # df_maio_small["timestamp"] = pd.to_datetime(df_maio_small["timestamp"])
+    # df_maio_small = df_maio_small.set_index("timestamp")
+
+    # print(f"{df_maio_small.shape[0]} over 257")
+
+    # # Resample the dataframe to 1 minute
+    # df_maio_small_resampled = df_maio_small.resample("1Min").mean()
+
+    # # Fill missing values with the previous value
+    # df_maio_small_resampled = df_maio_small_resampled.fillna(method="ffill")
+
+    # df_maio_small_resampled.reset_index(inplace=True)
+
+    # # # Reset the index
+    # # df_maio_small_resampled.set_index(inplace=True)
+
+    # # Drop the timestamp column
+    # df_maio_small_resampled.drop(columns=["timestamp"], axis=1, inplace=True)
+
+    # # Invoke the SM endpoint
+    # response = .invoke_endpoint(
+    #     EndpointName=model_version.job_name,
+    #     ContentType="application/json",
+    #     Accept="application/json",
+    #     Body=df_maio_small_resampled.to_json(orient="split", index=False),
+    # )
+
+    # # Transform the response to a string
+    # data = response["Body"].read().decode("utf-8")
+
+    # anom_score = pd.read_json(json.loads(data), orient="split")
+
+    return JSONResponse({"status": True})
