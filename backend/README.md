@@ -72,7 +72,10 @@ curl -X 'PATCH' \
   -d '{
   "datasource_id": 16,
   "train_test_split": 0.7,
-  "algorithm_parameters": {"maio_token":"fzzCJ2rR75djmJtNKP5k66pKfLBzDO", "maio_instance_str": "heineken"}
+  "algorithm_parameters": {
+    "maio_token":"fzzCJ2rR75djmJtNKP5k66pKfLBzDO",
+    "maio_instance_str": "heineken"
+  }
 }'
 
 # Launch training for ModelVersion #1

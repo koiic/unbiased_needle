@@ -99,29 +99,36 @@ class ModelVersionUpdate(SQLModel):
 
 def create_model_and_model_version():
     with Session(engine) as session:
-        model_1 = Model(
-            name="model_1",
-            description="model_1 description",
-            datasource_id=1,
-            tag_names=[
-                "CoolerTemp",
-                "BathTemp",
-                "CoolerSwitch",
-                "RefridgentTemp",
-                "CompressorCurrent",
-            ],
-        )
-        session.add(model_1)
-        session.commit()
+        db_model = session.exec(select(Model)).first()
+        if not db_model:
+            model_1 = Model(
+                name="model_1",
+                description="model_1 description",
+                datasource_id=1,
+                tag_names=[
+                    "CoolerTemp",
+                    "BathTemp",
+                    "CoolerSwitch",
+                    "RefridgentTemp",
+                    "CompressorCurrent",
+                ],
+            )
+            session.add(model_1)
+            session.commit()
 
-        model_version_1 = ModelVersion(
-            name="model_version_1",
-            datasource_id=16,
-            start_datetime=datetime(2022, 10, 14, 0, 1, 0),
-            end_datetime=datetime(2023, 3, 22, 15, 48, 0),
-            train_test_split=0.8,
-            model_id=model_1.id,
-        )
+        db_model = session.exec(select(Model)).first()
 
-        session.add(model_version_1)
-        session.commit()
+        db_model_version = session.exec(select(ModelVersion)).first()
+
+        if not db_model_version:
+            model_version_1 = ModelVersion(
+                name="model_version_1",
+                datasource_id=16,
+                start_datetime=datetime(2022, 10, 14, 0, 1, 0),
+                end_datetime=datetime(2023, 3, 22, 15, 48, 0),
+                train_test_split=0.8,
+                model_id=db_model.id,
+            )
+
+            session.add(model_version_1)
+            session.commit()
