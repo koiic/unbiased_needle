@@ -43,44 +43,62 @@ async def default_parameters(algorithm_name: str):
 
     if algorithm_name == "VAE":
         json_encoded_data = {
-            "encoder_hidden_sizes": {"type": "<class 'tuple'>", "default": [25, 10, 5]},
-            "decoder_hidden_sizes": {"type": "<class 'tuple'>", "default": [5, 10, 25]},
-            "latent_size": {"type": "<class 'int'>", "default": 5},
-            "sequence_len": {"type": "<class 'int'>", "default": 1},
-            "kld_weight": {"type": "<class 'float'>", "default": 1},
-            "dropout_rate": {"type": "<class 'float'>", "default": 0},
-            "num_eval_samples": {"type": "<class 'int'>", "default": 10},
-            "lr": {"type": "<class 'float'>", "default": 0.001},
-            "batch_size": {"type": "<class 'int'>", "default": 1024},
-            "num_epochs": {"type": "<class 'int'>", "default": 10},
-            "max_score": {"type": "<class 'int'>", "default": 1000},
-            "enable_calibrator": {"type": "<class 'bool'>", "default": True},
-            "enable_threshold": {"type": "<class 'bool'>", "default": True},
+            "encoder_hidden_sizes": {"type": "Array", "default": [25, 10, 5]},
+            "decoder_hidden_sizes": {"type": "Array", "default": [5, 10, 25]},
+            "latent_size": {"type": "Number", "default": 5},  # was <class 'int'>
+            "sequence_len": {"type": "Number", "default": 1},  # was <class 'int'>
+            "kld_weight": {"type": "Number", "default": 1},  # was <class 'float'>
+            "dropout_rate": {"type": "Number", "default": 0},  # was <class 'float'>
+            "num_eval_samples": {"type": "Number", "default": 10},  # was <class 'int'>
+            "lr": {"type": "Number", "default": 0.001},  # was <class 'float'>
+            "batch_size": {"type": "Number", "default": 1024},  # was <class 'int'>
+            "num_epochs": {"type": "Number", "default": 10},  # was <class 'int'>
+            "max_score": {"type": "Number", "default": 1000},  # was <class 'int'>
+            "enable_calibrator": {
+                "type": "Boolean",
+                "default": True,
+            },  # was <class 'bool'>
+            "enable_threshold": {
+                "type": "Boolean",
+                "default": True,
+            },  # was <class 'bool'>
         }
     elif algorithm_name == "LSTMED":
         json_encoded_data = {
-            "hidden_size": {"type": "<class 'int'>", "default": 5},
-            "sequence_len": {"type": "<class 'int'>", "default": 20},
-            "n_layers": {"type": "<class 'tuple'>", "default": [1, 1]},
-            "dropout": {"type": "<class 'tuple'>", "default": [0, 0]},
-            "lr": {"type": "<class 'float'>", "default": 0.001},
-            "batch_size": {"type": "<class 'int'>", "default": 256},
-            "num_epochs": {"type": "<class 'int'>", "default": 10},
-            "max_score": {"type": "<class 'int'>", "default": 1000},
-            "enable_calibrator": {"type": "<class 'bool'>", "default": True},
-            "enable_threshold": {"type": "<class 'bool'>", "default": True},
+            "hidden_size": {"type": "Number", "default": 5},  # was <class 'int'>
+            "sequence_len": {"type": "Number", "default": 20},  # was <class 'int'>
+            "n_layers": {"type": "Array", "default": [1, 1]},  # was <class 'int'>
+            "dropout": {"type": "Array", "default": [0, 0]},  # was <class 'int'>
+            "lr": {"type": "Number", "default": 0.001},  # was <class 'float'>
+            "batch_size": {"type": "Number", "default": 256},  # was <class 'int'>
+            "num_epochs": {"type": "Number", "default": 10},  # was <class 'int'>
+            "max_score": {"type": "Number", "default": 1000},  # was <class 'int'>
+            "enable_calibrator": {
+                "type": "Boolean",
+                "default": True,
+            },  # was <class 'bool'>
+            "enable_threshold": {
+                "type": "Boolean",
+                "default": True,
+            },  # was <class 'bool'>
         }
     elif algorithm_name == "AutoEncoder":
         json_encoded_data = {
-            "hidden_size": {"type": "<class 'int'>", "default": 5},
-            "layer_sizes": {"type": "<class 'tuple'>", "default": [25, 10, 5]},
-            "sequence_len": {"type": "<class 'int'>", "default": 1},
-            "lr": {"type": "<class 'float'>", "default": 0.001},
-            "batch_size": {"type": "<class 'int'>", "default": 512},
-            "num_epochs": {"type": "<class 'int'>", "default": 50},
-            "max_score": {"type": "<class 'int'>", "default": 1000},
-            "enable_calibrator": {"type": "<class 'bool'>", "default": True},
-            "enable_threshold": {"type": "<class 'bool'>", "default": True},
+            "hidden_size": {"type": "Number", "default": 5},  # was <class 'int'>
+            "layer_sizes": {"type": "Array", "default": [25, 10, 5]},
+            "sequence_len": {"type": "Number", "default": 1},  # was <class 'int'>
+            "lr": {"type": "Number", "default": 0.001},  # was <class 'float'>
+            "batch_size": {"type": "Number", "default": 512},  # was <class 'int'>
+            "num_epochs": {"type": "Number", "default": 50},  # was <class 'int'>
+            "max_score": {"type": "Number", "default": 1000},  # was <class 'int'>
+            "enable_calibrator": {
+                "type": "Boolean",
+                "default": True,
+            },  # was <class 'bool'>
+            "enable_threshold": {
+                "type": "Boolean",
+                "default": True,
+            },  # was <class 'bool'>
         }
     else:
         raise Exception("Algorithm not found")
@@ -358,7 +376,7 @@ async def deploy_model_version(model_version_id: int):
         model_data=model_data,
         role=aws_role,
         entry_point="script.py",
-        source_dir="s3://maio-sagemaker/code/code.tar.gz",
+        source_dir="s3://maio-sagemaker/code_deploy/code.tar.gz",
         code_location="s3://maio-sagemaker/code_location/",
         framework_version="2.0.0",
         py_version="py310",
