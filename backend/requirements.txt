@@ -4,3 +4,4 @@ firebase-admin
 sqlmodel
 sagemaker
 python-dotenv
+psycopg2-binary

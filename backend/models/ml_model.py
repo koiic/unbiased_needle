@@ -2,18 +2,16 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 from database import engine
-
 # One line of FastAPI imports here later 👈
 from sqlmodel import (
     Enum,
     JSON,
     Column,
     Field,
-    Relationship,
     Session,
     SQLModel,
-    create_engine,
     select,
+    Relationship
 )
 
 
@@ -50,7 +48,7 @@ class AlgorithmName(str, Enum):
 
 
 class ModelVersionStatus(str, Enum):
-    TrainingNotStarted = "TraininNotStarted"
+    TrainingNotStarted = "TrainingNotStarted"
     TrainingInProgress = "TrainingInProgress"
     TrainingCompleted = "TrainingCompleted"
     TrainingFailed = "TrainingFailed"
@@ -132,3 +130,24 @@ def create_model_and_model_version():
 
             session.add(model_version_1)
             session.commit()
+
+
+class ModelSchedulerBase(SQLModel):
+    model_version_id: int = Field(foreign_key="modelversion.id")
+    start_time: datetime
+    seconds_to_repeat: int
+    datasource_id: int
+
+
+class ModelScheduler(ModelSchedulerBase, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    model_version: Optional[ModelVersion] = Relationship()
+
+
+
+class ModelSchedulerCreate(ModelSchedulerBase):
+    pass
+
+
+class ModelSchedulerRead(ModelSchedulerBase):
+    id: int

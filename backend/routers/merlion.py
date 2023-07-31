@@ -11,6 +11,7 @@ from enum import Enum
 from typing import List
 
 import boto3
+import pandas as pd
 from database import engine
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
@@ -30,7 +31,14 @@ import sagemaker
 from sagemaker.pytorch import PyTorch, PyTorchModel
 from sqlmodel import Session, select
 
+from dotenv import load_dotenv
+from models.ml_model import ModelSchedulerRead, ModelSchedulerCreate, ModelScheduler
+
+from utils.services import call_lambda_function
+
 merlion_router = APIRouter()
+
+load_dotenv()
 
 
 @merlion_router.get("/default_parameters/{algorithm_name}")
@@ -322,6 +330,7 @@ async def get_model_version_status(model_version_id: int):
 @merlion_router.get("/model_versions/{model_version_id}/deploy")
 async def deploy_model_version(model_version_id: int):
     # Getting status of the model version
+
     model_version_status = await get_model_version_status(model_version_id)
     data = json.loads(model_version_status.body)
 
@@ -406,7 +415,7 @@ async def undeploy_model_version(model_version_id: int):
 
 
 @merlion_router.post("/model_versions/{model_version_id}/predict")
-async def model_versions_predict(model_version_id: int, dt: datetime):
+async def model_versions_predict(model_version_id: int, dt: str):
     model_version_status = await get_model_version_status(model_version_id)
 
     data = json.loads(model_version_status.body)
@@ -423,6 +432,9 @@ async def model_versions_predict(model_version_id: int, dt: datetime):
         if not model_version:
             raise HTTPException(status_code=500, detail="ModelVersion not found")
 
+    # convert dt to datetime
+    dt = datetime.strptime(dt, "%Y-%m-%dT%H:%M:%S")
+    print(dt, "_+_+", model_version.end_datetime)
     if dt < model_version.end_datetime:
         raise HTTPException(
             status_code=500,
@@ -451,5 +463,97 @@ async def model_versions_predict(model_version_id: int, dt: datetime):
     # data = response["Body"].read().decode("utf-8")
 
     # anom_score = pd.read_json(json.loads(data), orient="split")
+
+    return JSONResponse({"status": True})
+
+
+@merlion_router.post("/model_schedulers", response_model=ModelSchedulerRead)
+async def schedule_model_version(model_scheduler: ModelSchedulerCreate):
+    print("schedule_model_version")
+    with Session(engine) as session:
+        model_version = session.get(ModelVersion, model_scheduler.model_version_id)
+        if not model_version:
+            raise HTTPException(status_code=500, detail="ModelVersion not found")
+
+        db_model_scheduler = ModelScheduler.from_orm(model_scheduler)
+        session.add(db_model_scheduler)
+        session.commit()
+        session.refresh(db_model_scheduler)
+
+        lambda_function_arn = os.getenv("LAMBDA_FUNCTION_ARN",
+                                        "arn:aws:lambda:eu-west-1:146915812621:function:test_func_v2")
+
+        print("lambda function", lambda_function_arn)
+        event_client = boto3.client("events")
+        # if seconds_to_repeat = set to current time
+
+        payload = {
+            "gateway_name": "Aruba",
+            "token": model_version.algorithm_parameters["maio_token"],
+            "endpoint": model_version.job_name,
+            "start_time": datetime.strftime(db_model_scheduler.start_time, "%Y-%m-%dT%H:%M:%S.%fZ"),
+        }
+
+        if db_model_scheduler.seconds_to_repeat == 0:
+            # call the lambda function immediately
+            return call_lambda_function(payload)
+
+        rate = f'rate({db_model_scheduler.seconds_to_repeat // 60} minutes)'
+
+        response = event_client.put_rule(
+            Name=f"{model_version.job_name}_{db_model_scheduler.id}",
+            ScheduleExpression=rate,  # Set the desired interval
+            State='ENABLED',
+
+        )
+
+        # Create the target for the rule
+        target = {
+            "Id": f"{model_version.job_name}_{db_model_scheduler.id}",
+            "Arn": lambda_function_arn,
+            "Input": json.dumps(payload)  # Set the desired payload for each invocation
+        }
+
+        # Add the target to the rule
+        event_client.put_targets(
+            Rule=f"{model_version.job_name}_{db_model_scheduler.id}",
+            Targets=[target]
+        )
+
+        # Add permission for CloudWatch Events to invoke the Lambda function
+        lambda_client = boto3.client("lambda")
+        lambda_client.add_permission(
+            FunctionName=lambda_function_arn.split(":")[-1],
+            StatementId=f"{model_version.job_name}_{db_model_scheduler.id}",
+            Action='lambda:InvokeFunction',
+            Principal='events.amazonaws.com',
+            SourceArn=response['RuleArn']
+        )
+
+        print('CloudWatch Event rule created successfully.')
+
+    return JSONResponse({"status": True, "message": "ModelScheduler created successfully"})
+
+
+@merlion_router.delete("/model_schedulers/{model_scheduler_id}")
+async def delete_schedule(model_scheduler_id: int):
+    with Session(engine) as session:
+        model_scheduler = session.get(ModelScheduler, model_scheduler_id)
+        print(model_scheduler, "====")
+        if not model_scheduler:
+            raise HTTPException(status_code=500, detail="ModelScheduler not found")
+
+        event_client = boto3.client("events")
+        event_client.remove_targets(
+            Rule=f"{model_scheduler.model_version.job_name}_{model_scheduler.id}",
+            Ids=["1"]
+        )
+
+        event_client.delete_rule(
+            Name=f"{model_scheduler.model_version.job_name}_{model_scheduler.id}"
+        )
+
+        session.delete(model_scheduler)
+        session.commit()
 
     return JSONResponse({"status": True})
