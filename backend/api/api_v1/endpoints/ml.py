@@ -11,29 +11,22 @@ from enum import Enum
 from typing import List
 
 import boto3
+import sagemaker
 from database import engine
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
-from models.ml_model import (
-    Model,
-    ModelCreate,
-    ModelRead,
-    ModelUpdate,
-    ModelVersion,
-    ModelVersionCreate,
-    ModelVersionRead,
-    ModelVersionStatus,
-    ModelVersionUpdate,
-)
-import sagemaker
 from sagemaker.pytorch import PyTorch, PyTorchModel
 from sqlmodel import Session, select
 
-merlion_router = APIRouter()
+from .ml_model import (Model, ModelCreate, ModelRead, ModelUpdate,
+                       ModelVersion, ModelVersionCreate, ModelVersionRead,
+                       ModelVersionStatus, ModelVersionUpdate)
+
+ml_router = APIRouter()
 
 
-@merlion_router.get("/default_parameters/{algorithm_name}")
+@ml_router.get("/default_parameters/{algorithm_name}")
 async def default_parameters(algorithm_name: str):
     assert algorithm_name in [
         "VAE",
@@ -106,7 +99,7 @@ async def default_parameters(algorithm_name: str):
     return JSONResponse(content=json_encoded_data)
 
 
-@merlion_router.post("/models/", response_model=ModelRead)
+@ml_router.post("/models/", response_model=ModelRead)
 def create_model(model: ModelCreate):
     with Session(engine) as session:
         db_model = Model.from_orm(model)
@@ -116,14 +109,14 @@ def create_model(model: ModelCreate):
         return db_model
 
 
-@merlion_router.get("/models/", response_model=List[ModelRead])
+@ml_router.get("/models/", response_model=List[ModelRead])
 def read_models(offset: int = 0, limit: int = Query(default=100, lte=100)):
     with Session(engine) as session:
         models = session.exec(select(Model).offset(offset).limit(limit)).all()
         return models
 
 
-@merlion_router.get("/models/{model_id}", response_model=ModelRead)
+@ml_router.get("/models/{model_id}", response_model=ModelRead)
 def read_model(model_id: int):
     with Session(engine) as session:
         model = session.get(Model, model_id)
@@ -132,7 +125,7 @@ def read_model(model_id: int):
         return model
 
 
-@merlion_router.patch("/models/{model_id}", response_model=ModelRead)
+@ml_router.patch("/models/{model_id}", response_model=ModelRead)
 def update_model(model_id: int, model: ModelUpdate):
     with Session(engine) as session:
         db_model = session.get(Model, model_id)
@@ -147,7 +140,7 @@ def update_model(model_id: int, model: ModelUpdate):
         return db_model
 
 
-@merlion_router.post("/model_versions/", response_model=ModelVersionRead)
+@ml_router.post("/model_versions/", response_model=ModelVersionRead)
 def create_model_versions(model_version: ModelVersionCreate):
     with Session(engine) as session:
         db_model_version = ModelVersion.from_orm(model_version)
@@ -157,7 +150,7 @@ def create_model_versions(model_version: ModelVersionCreate):
         return db_model_version
 
 
-@merlion_router.get("/model_versions/", response_model=List[ModelVersionRead])
+@ml_router.get("/model_versions/", response_model=List[ModelVersionRead])
 def read_model_versions(offset: int = 0, limit: int = Query(default=100, lte=100)):
     with Session(engine) as session:
         model_versions = session.exec(
@@ -166,9 +159,7 @@ def read_model_versions(offset: int = 0, limit: int = Query(default=100, lte=100
         return model_versions
 
 
-@merlion_router.get(
-    "/model_versions/{model_version_id}", response_model=ModelVersionRead
-)
+@ml_router.get("/model_versions/{model_version_id}", response_model=ModelVersionRead)
 def read_model_version(model_version_id: int):
     with Session(engine) as session:
         model_version = session.get(ModelVersion, model_version_id)
@@ -177,9 +168,7 @@ def read_model_version(model_version_id: int):
         return model_version
 
 
-@merlion_router.patch(
-    "/model_versions/{model_version_id}", response_model=ModelVersionRead
-)
+@ml_router.patch("/model_versions/{model_version_id}", response_model=ModelVersionRead)
 def update_model_version(model_version_id: int, model_version: ModelVersionUpdate):
     with Session(engine) as session:
         db_model_version = session.get(ModelVersion, model_version_id)
@@ -195,7 +184,7 @@ def update_model_version(model_version_id: int, model_version: ModelVersionUpdat
         return db_model_version
 
 
-@merlion_router.post(
+@ml_router.post(
     "/model_versions/{model_version_id}/train", response_model=ModelVersionRead
 )
 async def train_model_version(model_version_id: int):
@@ -278,7 +267,7 @@ async def train_model_version(model_version_id: int):
         return db_model_version
 
 
-@merlion_router.get("/model_versions/{model_version_id}/status")
+@ml_router.get("/model_versions/{model_version_id}/status")
 async def get_model_version_status(model_version_id: int):
     """get model_version status from sagemaker directly to avoid having
     to keep the db in sync with sagemaker
@@ -337,7 +326,7 @@ async def get_model_version_status(model_version_id: int):
     )
 
 
-@merlion_router.get("/model_versions/{model_version_id}/deploy")
+@ml_router.get("/model_versions/{model_version_id}/deploy")
 async def deploy_model_version(model_version_id: int):
     # Getting status of the model version
     model_version_status = await get_model_version_status(model_version_id)
@@ -391,7 +380,7 @@ async def deploy_model_version(model_version_id: int):
     return JSONResponse({"status": ModelVersionStatus.CreatingEndpoint})
 
 
-@merlion_router.get("/model_versions/{model_version_id}/undeploy")
+@ml_router.get("/model_versions/{model_version_id}/undeploy")
 async def undeploy_model_version(model_version_id: int):
     # Getting status of the model version
     model_version_status = await get_model_version_status(model_version_id)
@@ -423,7 +412,7 @@ async def undeploy_model_version(model_version_id: int):
     return JSONResponse({"status": ModelVersionStatus.DeletingEndpoint})
 
 
-@merlion_router.post("/model_versions/{model_version_id}/predict")
+@ml_router.post("/model_versions/{model_version_id}/predict")
 async def model_versions_predict(model_version_id: int, dt: datetime):
     model_version_status = await get_model_version_status(model_version_id)
 
