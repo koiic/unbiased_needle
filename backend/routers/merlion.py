@@ -34,8 +34,6 @@ from sqlmodel import Session, select
 from dotenv import load_dotenv
 from models.ml_model import ModelSchedulerRead, ModelSchedulerCreate, ModelScheduler
 
-from utils.services import call_lambda_function
-
 merlion_router = APIRouter()
 
 load_dotenv()
