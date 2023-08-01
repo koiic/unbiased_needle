@@ -88,7 +88,6 @@ class ModelVersionUpdate(SQLModel):
 
 
 class ModelSchedulerBase(SQLModel):
-    model_version_id: int = Field(foreign_key="modelversion.id")
     start_time: datetime
     seconds_to_repeat: int
     datasource_id: int
@@ -96,11 +95,12 @@ class ModelSchedulerBase(SQLModel):
 
 class ModelScheduler(ModelSchedulerBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
+    model_version_id: int = Field(foreign_key="modelversion.id")
     model_version: Optional[ModelVersion] = Relationship()
 
 
 class ModelSchedulerCreate(ModelSchedulerBase):
-    pass
+    model_version_id: Optional[int] = None
 
 
 class ModelSchedulerRead(ModelSchedulerBase):

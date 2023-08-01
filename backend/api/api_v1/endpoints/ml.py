@@ -481,15 +481,15 @@ async def model_versions_predict(model_version_id: int, dt: datetime):
     return JSONResponse({"status": True})
 
 
-@ml_router.post("/model_schedulers", response_model=ModelSchedulerRead)
-async def schedule_model_version(model_scheduler: ModelSchedulerCreate):
+@ml_router.post("/model_versions/{model_version_id}/schedule", response_model=ModelSchedulerRead)
+async def schedule_model_version(model_version_id: int, model_scheduler: ModelSchedulerCreate):
     with Session(engine) as session:
-        model_version = session.get(ModelVersion, model_scheduler.model_version_id)
+        model_version = session.get(ModelVersion, model_version_id)
         if not model_version:
             raise HTTPException(status_code=500, detail="ModelVersion not found")
 
         # check if model version is deployed
-        model_version_status = await retrieve_model_version_status(model_version.id)
+        model_version_status = await retrieve_model_version_status(model_version_id)
 
         if model_version_status != ModelVersionStatus.InServiceEndpoint:
             raise HTTPException(
@@ -497,6 +497,7 @@ async def schedule_model_version(model_scheduler: ModelSchedulerCreate):
                 detail="ModelVersion not deployed yet. Please deploy the model first.",
             )
 
+        model_scheduler.model_version_id = model_version_id
         db_model_scheduler = ModelScheduler.from_orm(model_scheduler)
         session.add(db_model_scheduler)
         session.commit()
@@ -518,7 +519,6 @@ async def schedule_model_version(model_scheduler: ModelSchedulerCreate):
         if db_model_scheduler.seconds_to_repeat == 0:
             # TODO: call the lambda function immediately
             return db_model_scheduler
-
 
         rate = f'rate({db_model_scheduler.seconds_to_repeat // 60} minutes)'
 
