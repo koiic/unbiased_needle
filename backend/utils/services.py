@@ -18,7 +18,6 @@ if function_url is None:
 def call_lambda_function(payload: dict):
     # include payload as query strings
     try:
-
         url = f"{function_url}/prediction?data_source_name={payload['gateway_name']}&endpoint={payload['endpoint']}&start_time={payload['start_time']}&token={payload['token']}"
         response = requests.get(url)
         return json.loads(response.text)
