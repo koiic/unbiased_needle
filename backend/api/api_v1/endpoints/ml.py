@@ -11,24 +11,17 @@ from enum import Enum
 from typing import List
 
 import boto3
+import sagemaker
 from database import engine
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
-from .ml_model import (
-    Model,
-    ModelCreate,
-    ModelRead,
-    ModelUpdate,
-    ModelVersion,
-    ModelVersionCreate,
-    ModelVersionRead,
-    ModelVersionStatus,
-    ModelVersionUpdate,
-)
-import sagemaker
 from sagemaker.pytorch import PyTorch, PyTorchModel
 from sqlmodel import Session, select
+
+from .ml_model import (Model, ModelCreate, ModelRead, ModelUpdate,
+                       ModelVersion, ModelVersionCreate, ModelVersionRead,
+                       ModelVersionStatus, ModelVersionUpdate)
 
 ml_router = APIRouter()
 

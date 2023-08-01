@@ -1,12 +1,8 @@
-from fastapi import FastAPI
-
-from dotenv import load_dotenv
-
-from database import create_db_and_tables, engine
-
 from api.api_v1.api import router as api_router
 from api.api_v1.endpoints.ml_model import create_model_and_model_version
-
+from database import create_db_and_tables, engine
+from dotenv import load_dotenv
+from fastapi import FastAPI
 from mangum import Mangum
 
 ###
