@@ -2,19 +2,9 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 from database import engine
-
 # One line of FastAPI imports here later 👈
-from sqlmodel import (
-    Enum,
-    JSON,
-    Column,
-    Field,
-    Relationship,
-    Session,
-    SQLModel,
-    create_engine,
-    select,
-)
+from sqlmodel import (JSON, Column, Enum, Field, Relationship, Session,
+                      SQLModel, create_engine, select)
 
 
 class ModelBase(SQLModel):

@@ -18,4 +18,4 @@ clean: ## Clean up
 
 run_api:
 	@echo "Running API"
-	@uvicorn app:app --reload
+	@uvicorn main:app --reload
