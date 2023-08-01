@@ -87,6 +87,26 @@ class ModelVersionUpdate(SQLModel):
     algorithm_parameters: Optional[Dict[str, str]] = None
 
 
+class ModelSchedulerBase(SQLModel):
+    model_version_id: int = Field(foreign_key="modelversion.id")
+    start_time: datetime
+    seconds_to_repeat: int
+    datasource_id: int
+
+
+class ModelScheduler(ModelSchedulerBase, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    model_version: Optional[ModelVersion] = Relationship()
+
+
+class ModelSchedulerCreate(ModelSchedulerBase):
+    pass
+
+
+class ModelSchedulerRead(ModelSchedulerBase):
+    id: int
+
+
 def create_model_and_model_version():
     with Session(engine) as session:
         db_model = session.exec(select(Model)).first()

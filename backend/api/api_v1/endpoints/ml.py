@@ -21,7 +21,7 @@ from sqlmodel import Session, select
 
 from .ml_model import (Model, ModelCreate, ModelRead, ModelUpdate,
                        ModelVersion, ModelVersionCreate, ModelVersionRead,
-                       ModelVersionStatus, ModelVersionUpdate)
+                       ModelVersionStatus, ModelVersionUpdate, ModelSchedulerRead, ModelSchedulerCreate, ModelScheduler)
 
 ml_router = APIRouter()
 
@@ -267,8 +267,7 @@ async def train_model_version(model_version_id: int):
         return db_model_version
 
 
-@ml_router.get("/model_versions/{model_version_id}/status")
-async def get_model_version_status(model_version_id: int):
+async def retrieve_model_version_status(model_version_id: int):
     """get model_version status from sagemaker directly to avoid having
     to keep the db in sync with sagemaker
 
@@ -318,11 +317,31 @@ async def get_model_version_status(model_version_id: int):
         try:
             response = sagemaker_client.describe_endpoint(EndpointName=sm_job_name)
             endpoint_status = f"{response['EndpointStatus']}Endpoint"
+
         except:
             endpoint_status = None
 
+    return model_version_status if endpoint_status is None else endpoint_status
+
+
+@ml_router.get("/model_versions/{model_version_id}/status")
+async def get_model_version_status(model_version_id: int):
+    """get model_version status from sagemaker directly to avoid having
+    to keep the db in sync with sagemaker
+
+    Args:
+        model_version_id (int): the id of the model version
+
+    Raises:
+        HTTPException: 500 if the model version is not found
+
+    Returns:
+        ModelVersionStatus: the status of the model version
+    """
+    model_version_status = await retrieve_model_version_status(model_version_id)
+
     return JSONResponse(
-        {"status": model_version_status if endpoint_status is None else endpoint_status}
+        {"status": model_version_status}
     )
 
 
@@ -458,5 +477,104 @@ async def model_versions_predict(model_version_id: int, dt: datetime):
     # data = response["Body"].read().decode("utf-8")
 
     # anom_score = pd.read_json(json.loads(data), orient="split")
+
+    return JSONResponse({"status": True})
+
+
+@ml_router.post("/model_schedulers", response_model=ModelSchedulerRead)
+async def schedule_model_version(model_scheduler: ModelSchedulerCreate):
+    with Session(engine) as session:
+        model_version = session.get(ModelVersion, model_scheduler.model_version_id)
+        if not model_version:
+            raise HTTPException(status_code=500, detail="ModelVersion not found")
+
+        # check if model version is deployed
+        model_version_status = await retrieve_model_version_status(model_version.id)
+
+        if model_version_status != ModelVersionStatus.InServiceEndpoint:
+            raise HTTPException(
+                status_code=500,
+                detail="ModelVersion not deployed yet. Please deploy the model first.",
+            )
+
+        db_model_scheduler = ModelScheduler.from_orm(model_scheduler)
+        session.add(db_model_scheduler)
+        session.commit()
+        session.refresh(db_model_scheduler)
+
+        lambda_function_arn = os.getenv("LAMBDA_FUNCTION_ARN",
+                                        "arn:aws:lambda:eu-west-1:146915812621:function:test_func_v2")
+
+        event_client = boto3.client("events")
+        # if seconds_to_repeat = set to current time
+
+        payload = {
+            "datasource_id": db_model_scheduler.datasource_id,
+            "token": model_version.algorithm_parameters["maio_token"],
+            "endpoint": model_version.job_name,
+            "start_time": datetime.strftime(db_model_scheduler.start_time, "%Y-%m-%dT%H:%M:%S.%fZ"),
+        }
+
+        if db_model_scheduler.seconds_to_repeat == 0:
+            # TODO: call the lambda function immediately
+            return db_model_scheduler
+
+
+        rate = f'rate({db_model_scheduler.seconds_to_repeat // 60} minutes)'
+
+        response = event_client.put_rule(
+            Name=f"{db_model_scheduler.model_version.job_name}_{db_model_scheduler.id}",
+            ScheduleExpression=rate,  # Set the desired interval
+            State='ENABLED',
+
+        )
+
+        # Create the target for the rule
+        target = {
+            "Id": f"{db_model_scheduler.model_version.job_name}_{db_model_scheduler.id}",
+            "Arn": lambda_function_arn,
+            "Input": json.dumps(payload)  # Set the desired payload for each invocation
+        }
+
+        # Add the target to the rule
+        event_client.put_targets(
+            Rule=f"{db_model_scheduler.model_version.job_name}_{db_model_scheduler.id}",
+            Targets=[target]
+        )
+
+        # Add permission for CloudWatch Events to invoke the Lambda function
+        lambda_client = boto3.client("lambda")
+        lambda_client.add_permission(
+            FunctionName=lambda_function_arn.split(":")[-1],
+            StatementId=f"{db_model_scheduler.model_version.job_name}_{db_model_scheduler.id}",
+            Action='lambda:InvokeFunction',
+            Principal='events.amazonaws.com',
+            SourceArn=response['RuleArn']
+        )
+
+        print('CloudWatch Event rule created successfully.')
+
+    return db_model_scheduler
+
+
+@ml_router.delete("/model_schedulers/{model_scheduler_id}")
+async def delete_schedule(model_scheduler_id: int):
+    with Session(engine) as session:
+        model_scheduler = session.get(ModelScheduler, model_scheduler_id)
+        if model_scheduler is None:
+            raise HTTPException(status_code=500, detail="ModelScheduler not found")
+
+        event_client = boto3.client("events")
+        event_client.remove_targets(
+            Rule=f"{model_scheduler.model_version.job_name}_{model_scheduler.id}",
+            Ids=[f"{model_scheduler.model_version.job_name}_{model_scheduler.id}"]
+        )
+
+        event_client.delete_rule(
+            Name=f"{model_scheduler.model_version.job_name}_{model_scheduler.id}"
+        )
+
+        session.delete(model_scheduler)
+        session.commit()
 
     return JSONResponse({"status": True})
