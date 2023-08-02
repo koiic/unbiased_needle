@@ -2,9 +2,19 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 from database import engine
+
 # One line of FastAPI imports here later 👈
-from sqlmodel import (JSON, Column, Enum, Field, Relationship, Session,
-                      SQLModel, create_engine, select)
+from sqlmodel import (
+    JSON,
+    Column,
+    Enum,
+    Field,
+    Relationship,
+    Session,
+    SQLModel,
+    create_engine,
+    select,
+)
 
 
 class ModelBase(SQLModel):
@@ -40,7 +50,7 @@ class AlgorithmName(str, Enum):
 
 
 class ModelVersionStatus(str, Enum):
-    TrainingNotStarted = "TraininNotStarted"
+    TrainingNotStarted = "TrainingNotStarted"
     TrainingInProgress = "TrainingInProgress"
     TrainingCompleted = "TrainingCompleted"
     TrainingFailed = "TrainingFailed"
