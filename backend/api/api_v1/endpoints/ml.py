@@ -19,9 +19,20 @@ from fastapi.responses import JSONResponse
 from sagemaker.pytorch import PyTorch, PyTorchModel
 from sqlmodel import Session, select
 
-from .ml_model import (Model, ModelCreate, ModelRead, ModelUpdate,
-                       ModelVersion, ModelVersionCreate, ModelVersionRead,
-                       ModelVersionStatus, ModelVersionUpdate, ModelSchedulerRead, ModelSchedulerCreate, ModelScheduler)
+from .ml_model import (
+    Model,
+    ModelCreate,
+    ModelRead,
+    ModelUpdate,
+    ModelVersion,
+    ModelVersionCreate,
+    ModelVersionRead,
+    ModelVersionStatus,
+    ModelVersionUpdate,
+    ModelSchedulerRead,
+    ModelSchedulerCreate,
+    ModelScheduler,
+)
 
 ml_router = APIRouter()
 
@@ -340,9 +351,7 @@ async def get_model_version_status(model_version_id: int):
     """
     model_version_status = await retrieve_model_version_status(model_version_id)
 
-    return JSONResponse(
-        {"status": model_version_status}
-    )
+    return JSONResponse({"status": model_version_status})
 
 
 @ml_router.get("/model_versions/{model_version_id}/deploy")
@@ -481,8 +490,12 @@ async def model_versions_predict(model_version_id: int, dt: datetime):
     return JSONResponse({"status": True})
 
 
-@ml_router.post("/model_versions/{model_version_id}/schedule", response_model=ModelSchedulerRead)
-async def schedule_model_version(model_version_id: int, model_scheduler: ModelSchedulerCreate):
+@ml_router.post(
+    "/model_versions/{model_version_id}/schedule", response_model=ModelSchedulerRead
+)
+async def schedule_model_version(
+    model_version_id: int, model_scheduler: ModelSchedulerCreate
+):
     with Session(engine) as session:
         model_version = session.get(ModelVersion, model_version_id)
         if not model_version:
@@ -503,8 +516,10 @@ async def schedule_model_version(model_version_id: int, model_scheduler: ModelSc
         session.commit()
         session.refresh(db_model_scheduler)
 
-        lambda_function_arn = os.getenv("LAMBDA_FUNCTION_ARN",
-                                        "arn:aws:lambda:eu-west-1:146915812621:function:test_func_v2")
+        lambda_function_arn = os.getenv(
+            "LAMBDA_FUNCTION_ARN",
+            "arn:aws:lambda:eu-west-1:146915812621:function:test_func_v2",
+        )
 
         event_client = boto3.client("events")
         # if seconds_to_repeat = set to current time
@@ -513,33 +528,34 @@ async def schedule_model_version(model_version_id: int, model_scheduler: ModelSc
             "datasource_id": db_model_scheduler.datasource_id,
             "token": model_version.algorithm_parameters["maio_token"],
             "endpoint": model_version.job_name,
-            "start_time": datetime.strftime(db_model_scheduler.start_time, "%Y-%m-%dT%H:%M:%S.%fZ"),
+            "start_time": datetime.strftime(
+                db_model_scheduler.start_time, "%Y-%m-%dT%H:%M:%S.%fZ"
+            ),
         }
 
         if db_model_scheduler.seconds_to_repeat == 0:
             # TODO: call the lambda function immediately
             return db_model_scheduler
 
-        rate = f'rate({db_model_scheduler.seconds_to_repeat // 60} minutes)'
+        rate = f"rate({db_model_scheduler.seconds_to_repeat // 60} minutes)"
 
         response = event_client.put_rule(
             Name=f"{db_model_scheduler.model_version.job_name}_{db_model_scheduler.id}",
             ScheduleExpression=rate,  # Set the desired interval
-            State='ENABLED',
-
+            State="ENABLED",
         )
 
         # Create the target for the rule
         target = {
             "Id": f"{db_model_scheduler.model_version.job_name}_{db_model_scheduler.id}",
             "Arn": lambda_function_arn,
-            "Input": json.dumps(payload)  # Set the desired payload for each invocation
+            "Input": json.dumps(payload),  # Set the desired payload for each invocation
         }
 
         # Add the target to the rule
         event_client.put_targets(
             Rule=f"{db_model_scheduler.model_version.job_name}_{db_model_scheduler.id}",
-            Targets=[target]
+            Targets=[target],
         )
 
         # Add permission for CloudWatch Events to invoke the Lambda function
@@ -547,12 +563,12 @@ async def schedule_model_version(model_version_id: int, model_scheduler: ModelSc
         lambda_client.add_permission(
             FunctionName=lambda_function_arn.split(":")[-1],
             StatementId=f"{db_model_scheduler.model_version.job_name}_{db_model_scheduler.id}",
-            Action='lambda:InvokeFunction',
-            Principal='events.amazonaws.com',
-            SourceArn=response['RuleArn']
+            Action="lambda:InvokeFunction",
+            Principal="events.amazonaws.com",
+            SourceArn=response["RuleArn"],
         )
 
-        print('CloudWatch Event rule created successfully.')
+        print("CloudWatch Event rule created successfully.")
 
     return db_model_scheduler
 
@@ -567,7 +583,7 @@ async def delete_schedule(model_scheduler_id: int):
         event_client = boto3.client("events")
         event_client.remove_targets(
             Rule=f"{model_scheduler.model_version.job_name}_{model_scheduler.id}",
-            Ids=[f"{model_scheduler.model_version.job_name}_{model_scheduler.id}"]
+            Ids=[f"{model_scheduler.model_version.job_name}_{model_scheduler.id}"],
         )
 
         event_client.delete_rule(
