@@ -19,10 +19,20 @@ from fastapi.responses import JSONResponse
 from sagemaker.pytorch import PyTorch, PyTorchModel
 from sqlmodel import Session, select
 
-from .ml_model import (Model, ModelCreate, ModelRead, ModelScheduler,
-                       ModelSchedulerCreate, ModelSchedulerRead, ModelUpdate,
-                       ModelVersion, ModelVersionCreate, ModelVersionRead,
-                       ModelVersionStatus, ModelVersionUpdate)
+from .ml_model import (
+    Model,
+    ModelCreate,
+    ModelRead,
+    ModelUpdate,
+    ModelVersion,
+    ModelVersionCreate,
+    ModelVersionRead,
+    ModelVersionStatus,
+    ModelVersionUpdate,
+    ModelSchedulerRead,
+    ModelSchedulerCreate,
+    ModelScheduler,
+)
 
 ml_router = APIRouter()
 

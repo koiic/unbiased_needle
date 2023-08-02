@@ -1,6 +1,5 @@
 fastapi
 uvicorn
-firebase-admin
 sqlmodel
 sagemaker
 python-dotenv
