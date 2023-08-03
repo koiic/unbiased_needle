@@ -16,7 +16,7 @@ def on_startup():
     create_model_and_model_version()
 
 
-@app.get("/")
+@app.get("/ping")
 async def root():
     return {"message": "pong"}
 
