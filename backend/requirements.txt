@@ -4,3 +4,4 @@ sqlmodel
 sagemaker
 python-dotenv
 mangum
+psycopg2-binary
