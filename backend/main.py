@@ -16,6 +16,11 @@ def on_startup():
     create_model_and_model_version()
 
 
+@app.get("/")
+def read_root():
+    return {"message": "Hello World"}
+
+
 @app.get("/ping")
 async def root():
     return {"message": "pong"}
@@ -24,7 +29,7 @@ async def root():
 app.include_router(api_router, prefix="/api/v1")
 handler = Mangum(app)
 
-if __name__ == "__main__":
-    import uvicorn
+# if __name__ == "__main__":
+#     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+#     uvicorn.run(app, host="0.0.0.0", port=8080)
