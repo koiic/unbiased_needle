@@ -23,15 +23,15 @@ from .ml_model import (
     Model,
     ModelCreate,
     ModelRead,
+    ModelScheduler,
+    ModelSchedulerCreate,
+    ModelSchedulerRead,
     ModelUpdate,
     ModelVersion,
     ModelVersionCreate,
     ModelVersionRead,
     ModelVersionStatus,
     ModelVersionUpdate,
-    ModelSchedulerRead,
-    ModelSchedulerCreate,
-    ModelScheduler,
 )
 
 ml_router = APIRouter()
@@ -110,7 +110,7 @@ async def default_parameters(algorithm_name: str):
     return JSONResponse(content=json_encoded_data)
 
 
-@ml_router.post("/models/", response_model=ModelRead)
+@ml_router.post("/models", response_model=ModelRead)
 def create_model(model: ModelCreate):
     with Session(engine) as session:
         db_model = Model.from_orm(model)
@@ -120,7 +120,7 @@ def create_model(model: ModelCreate):
         return db_model
 
 
-@ml_router.get("/models/", response_model=List[ModelRead])
+@ml_router.get("/models", response_model=List[ModelRead])
 def read_models(offset: int = 0, limit: int = Query(default=100, lte=100)):
     with Session(engine) as session:
         models = session.exec(select(Model).offset(offset).limit(limit)).all()
@@ -151,17 +151,21 @@ def update_model(model_id: int, model: ModelUpdate):
         return db_model
 
 
-@ml_router.post("/model_versions/", response_model=ModelVersionRead)
+@ml_router.post("/model_versions", response_model=ModelVersionRead)
 def create_model_versions(model_version: ModelVersionCreate):
     with Session(engine) as session:
-        db_model_version = ModelVersion.from_orm(model_version)
-        session.add(db_model_version)
-        session.commit()
-        session.refresh(db_model_version)
+        try:
+            db_model_version = ModelVersion.from_orm(model_version)
+            session.add(db_model_version)
+            session.commit()
+            session.refresh(db_model_version)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error: {e}")
+
         return db_model_version
 
 
-@ml_router.get("/model_versions/", response_model=List[ModelVersionRead])
+@ml_router.get("/model_versions", response_model=List[ModelVersionRead])
 def read_model_versions(offset: int = 0, limit: int = Query(default=100, lte=100)):
     with Session(engine) as session:
         model_versions = session.exec(
