@@ -155,6 +155,12 @@ def update_model(model_id: int, model: ModelUpdate):
 def create_model_versions(model_version: ModelVersionCreate):
     with Session(engine) as session:
         db_model_version = ModelVersion.from_orm(model_version)
+        if not db_model_version:
+            raise HTTPException(
+                status_code=500,
+                detail="Unable to build model version, check your model id",
+            )
+
         session.add(db_model_version)
         session.commit()
         session.refresh(db_model_version)
