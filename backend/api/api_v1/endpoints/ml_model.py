@@ -5,9 +5,9 @@ from database import engine
 
 # One line of FastAPI imports here later 👈
 from sqlmodel import (
-    Enum,
     JSON,
     Column,
+    Enum,
     Field,
     Relationship,
     Session,
@@ -50,7 +50,7 @@ class AlgorithmName(str, Enum):
 
 
 class ModelVersionStatus(str, Enum):
-    TrainingNotStarted = "TraininNotStarted"
+    TrainingNotStarted = "TrainingNotStarted"
     TrainingInProgress = "TrainingInProgress"
     TrainingCompleted = "TrainingCompleted"
     TrainingFailed = "TrainingFailed"
@@ -95,6 +95,26 @@ class ModelVersionUpdate(SQLModel):
     train_test_split: Optional[float] = None
     algorithm_name: Optional[AlgorithmName] = None
     algorithm_parameters: Optional[Dict[str, str]] = None
+
+
+class ModelSchedulerBase(SQLModel):
+    start_time: datetime
+    seconds_to_repeat: int
+    datasource_id: int
+
+
+class ModelScheduler(ModelSchedulerBase, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    model_version_id: int = Field(foreign_key="modelversion.id")
+    model_version: Optional[ModelVersion] = Relationship()
+
+
+class ModelSchedulerCreate(ModelSchedulerBase):
+    model_version_id: Optional[int] = None
+
+
+class ModelSchedulerRead(ModelSchedulerBase):
+    id: int
 
 
 def create_model_and_model_version():

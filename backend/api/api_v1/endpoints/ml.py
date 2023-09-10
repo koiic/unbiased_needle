@@ -11,14 +11,21 @@ from enum import Enum
 from typing import List
 
 import boto3
+import sagemaker
 from database import engine
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
-from models.ml_model import (
+from sagemaker.pytorch import PyTorch, PyTorchModel
+from sqlmodel import Session, select
+
+from .ml_model import (
     Model,
     ModelCreate,
     ModelRead,
+    ModelScheduler,
+    ModelSchedulerCreate,
+    ModelSchedulerRead,
     ModelUpdate,
     ModelVersion,
     ModelVersionCreate,
@@ -26,14 +33,11 @@ from models.ml_model import (
     ModelVersionStatus,
     ModelVersionUpdate,
 )
-import sagemaker
-from sagemaker.pytorch import PyTorch, PyTorchModel
-from sqlmodel import Session, select
 
-merlion_router = APIRouter()
+ml_router = APIRouter()
 
 
-@merlion_router.get("/default_parameters/{algorithm_name}")
+@ml_router.get("/default_parameters/{algorithm_name}")
 async def default_parameters(algorithm_name: str):
     assert algorithm_name in [
         "VAE",
@@ -43,44 +47,62 @@ async def default_parameters(algorithm_name: str):
 
     if algorithm_name == "VAE":
         json_encoded_data = {
-            "encoder_hidden_sizes": {"type": "<class 'tuple'>", "default": [25, 10, 5]},
-            "decoder_hidden_sizes": {"type": "<class 'tuple'>", "default": [5, 10, 25]},
-            "latent_size": {"type": "<class 'int'>", "default": 5},
-            "sequence_len": {"type": "<class 'int'>", "default": 1},
-            "kld_weight": {"type": "<class 'float'>", "default": 1},
-            "dropout_rate": {"type": "<class 'float'>", "default": 0},
-            "num_eval_samples": {"type": "<class 'int'>", "default": 10},
-            "lr": {"type": "<class 'float'>", "default": 0.001},
-            "batch_size": {"type": "<class 'int'>", "default": 1024},
-            "num_epochs": {"type": "<class 'int'>", "default": 10},
-            "max_score": {"type": "<class 'int'>", "default": 1000},
-            "enable_calibrator": {"type": "<class 'bool'>", "default": True},
-            "enable_threshold": {"type": "<class 'bool'>", "default": True},
+            "encoder_hidden_sizes": {"type": "Array", "default": [25, 10, 5]},
+            "decoder_hidden_sizes": {"type": "Array", "default": [5, 10, 25]},
+            "latent_size": {"type": "Number", "default": 5},  # was <class 'int'>
+            "sequence_len": {"type": "Number", "default": 1},  # was <class 'int'>
+            "kld_weight": {"type": "Number", "default": 1},  # was <class 'float'>
+            "dropout_rate": {"type": "Number", "default": 0},  # was <class 'float'>
+            "num_eval_samples": {"type": "Number", "default": 10},  # was <class 'int'>
+            "lr": {"type": "Number", "default": 0.001},  # was <class 'float'>
+            "batch_size": {"type": "Number", "default": 1024},  # was <class 'int'>
+            "num_epochs": {"type": "Number", "default": 10},  # was <class 'int'>
+            "max_score": {"type": "Number", "default": 1000},  # was <class 'int'>
+            "enable_calibrator": {
+                "type": "Boolean",
+                "default": True,
+            },  # was <class 'bool'>
+            "enable_threshold": {
+                "type": "Boolean",
+                "default": True,
+            },  # was <class 'bool'>
         }
     elif algorithm_name == "LSTMED":
         json_encoded_data = {
-            "hidden_size": {"type": "<class 'int'>", "default": 5},
-            "sequence_len": {"type": "<class 'int'>", "default": 20},
-            "n_layers": {"type": "<class 'tuple'>", "default": [1, 1]},
-            "dropout": {"type": "<class 'tuple'>", "default": [0, 0]},
-            "lr": {"type": "<class 'float'>", "default": 0.001},
-            "batch_size": {"type": "<class 'int'>", "default": 256},
-            "num_epochs": {"type": "<class 'int'>", "default": 10},
-            "max_score": {"type": "<class 'int'>", "default": 1000},
-            "enable_calibrator": {"type": "<class 'bool'>", "default": True},
-            "enable_threshold": {"type": "<class 'bool'>", "default": True},
+            "hidden_size": {"type": "Number", "default": 5},  # was <class 'int'>
+            "sequence_len": {"type": "Number", "default": 20},  # was <class 'int'>
+            "n_layers": {"type": "Array", "default": [1, 1]},  # was <class 'int'>
+            "dropout": {"type": "Array", "default": [0, 0]},  # was <class 'int'>
+            "lr": {"type": "Number", "default": 0.001},  # was <class 'float'>
+            "batch_size": {"type": "Number", "default": 256},  # was <class 'int'>
+            "num_epochs": {"type": "Number", "default": 10},  # was <class 'int'>
+            "max_score": {"type": "Number", "default": 1000},  # was <class 'int'>
+            "enable_calibrator": {
+                "type": "Boolean",
+                "default": True,
+            },  # was <class 'bool'>
+            "enable_threshold": {
+                "type": "Boolean",
+                "default": True,
+            },  # was <class 'bool'>
         }
     elif algorithm_name == "AutoEncoder":
         json_encoded_data = {
-            "hidden_size": {"type": "<class 'int'>", "default": 5},
-            "layer_sizes": {"type": "<class 'tuple'>", "default": [25, 10, 5]},
-            "sequence_len": {"type": "<class 'int'>", "default": 1},
-            "lr": {"type": "<class 'float'>", "default": 0.001},
-            "batch_size": {"type": "<class 'int'>", "default": 512},
-            "num_epochs": {"type": "<class 'int'>", "default": 50},
-            "max_score": {"type": "<class 'int'>", "default": 1000},
-            "enable_calibrator": {"type": "<class 'bool'>", "default": True},
-            "enable_threshold": {"type": "<class 'bool'>", "default": True},
+            "hidden_size": {"type": "Number", "default": 5},  # was <class 'int'>
+            "layer_sizes": {"type": "Array", "default": [25, 10, 5]},
+            "sequence_len": {"type": "Number", "default": 1},  # was <class 'int'>
+            "lr": {"type": "Number", "default": 0.001},  # was <class 'float'>
+            "batch_size": {"type": "Number", "default": 512},  # was <class 'int'>
+            "num_epochs": {"type": "Number", "default": 50},  # was <class 'int'>
+            "max_score": {"type": "Number", "default": 1000},  # was <class 'int'>
+            "enable_calibrator": {
+                "type": "Boolean",
+                "default": True,
+            },  # was <class 'bool'>
+            "enable_threshold": {
+                "type": "Boolean",
+                "default": True,
+            },  # was <class 'bool'>
         }
     else:
         raise Exception("Algorithm not found")
@@ -88,7 +110,7 @@ async def default_parameters(algorithm_name: str):
     return JSONResponse(content=json_encoded_data)
 
 
-@merlion_router.post("/models/", response_model=ModelRead)
+@ml_router.post("/models", response_model=ModelRead)
 def create_model(model: ModelCreate):
     with Session(engine) as session:
         db_model = Model.from_orm(model)
@@ -98,14 +120,14 @@ def create_model(model: ModelCreate):
         return db_model
 
 
-@merlion_router.get("/models/", response_model=List[ModelRead])
+@ml_router.get("/models", response_model=List[ModelRead])
 def read_models(offset: int = 0, limit: int = Query(default=100, lte=100)):
     with Session(engine) as session:
         models = session.exec(select(Model).offset(offset).limit(limit)).all()
         return models
 
 
-@merlion_router.get("/models/{model_id}", response_model=ModelRead)
+@ml_router.get("/models/{model_id}", response_model=ModelRead)
 def read_model(model_id: int):
     with Session(engine) as session:
         model = session.get(Model, model_id)
@@ -114,7 +136,7 @@ def read_model(model_id: int):
         return model
 
 
-@merlion_router.patch("/models/{model_id}", response_model=ModelRead)
+@ml_router.patch("/models/{model_id}", response_model=ModelRead)
 def update_model(model_id: int, model: ModelUpdate):
     with Session(engine) as session:
         db_model = session.get(Model, model_id)
@@ -129,17 +151,21 @@ def update_model(model_id: int, model: ModelUpdate):
         return db_model
 
 
-@merlion_router.post("/model_versions/", response_model=ModelVersionRead)
+@ml_router.post("/model_versions", response_model=ModelVersionRead)
 def create_model_versions(model_version: ModelVersionCreate):
     with Session(engine) as session:
-        db_model_version = ModelVersion.from_orm(model_version)
-        session.add(db_model_version)
-        session.commit()
-        session.refresh(db_model_version)
+        try:
+            db_model_version = ModelVersion.from_orm(model_version)
+            session.add(db_model_version)
+            session.commit()
+            session.refresh(db_model_version)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error: {e}")
+
         return db_model_version
 
 
-@merlion_router.get("/model_versions/", response_model=List[ModelVersionRead])
+@ml_router.get("/model_versions", response_model=List[ModelVersionRead])
 def read_model_versions(offset: int = 0, limit: int = Query(default=100, lte=100)):
     with Session(engine) as session:
         model_versions = session.exec(
@@ -148,9 +174,7 @@ def read_model_versions(offset: int = 0, limit: int = Query(default=100, lte=100
         return model_versions
 
 
-@merlion_router.get(
-    "/model_versions/{model_version_id}", response_model=ModelVersionRead
-)
+@ml_router.get("/model_versions/{model_version_id}", response_model=ModelVersionRead)
 def read_model_version(model_version_id: int):
     with Session(engine) as session:
         model_version = session.get(ModelVersion, model_version_id)
@@ -159,9 +183,7 @@ def read_model_version(model_version_id: int):
         return model_version
 
 
-@merlion_router.patch(
-    "/model_versions/{model_version_id}", response_model=ModelVersionRead
-)
+@ml_router.patch("/model_versions/{model_version_id}", response_model=ModelVersionRead)
 def update_model_version(model_version_id: int, model_version: ModelVersionUpdate):
     with Session(engine) as session:
         db_model_version = session.get(ModelVersion, model_version_id)
@@ -177,7 +199,7 @@ def update_model_version(model_version_id: int, model_version: ModelVersionUpdat
         return db_model_version
 
 
-@merlion_router.post(
+@ml_router.post(
     "/model_versions/{model_version_id}/train", response_model=ModelVersionRead
 )
 async def train_model_version(model_version_id: int):
@@ -260,8 +282,7 @@ async def train_model_version(model_version_id: int):
         return db_model_version
 
 
-@merlion_router.get("/model_versions/{model_version_id}/status")
-async def get_model_version_status(model_version_id: int):
+async def retrieve_model_version_status(model_version_id: int):
     """get model_version status from sagemaker directly to avoid having
     to keep the db in sync with sagemaker
 
@@ -311,15 +332,33 @@ async def get_model_version_status(model_version_id: int):
         try:
             response = sagemaker_client.describe_endpoint(EndpointName=sm_job_name)
             endpoint_status = f"{response['EndpointStatus']}Endpoint"
+
         except:
             endpoint_status = None
 
-    return JSONResponse(
-        {"status": model_version_status if endpoint_status is None else endpoint_status}
-    )
+    return model_version_status if endpoint_status is None else endpoint_status
 
 
-@merlion_router.get("/model_versions/{model_version_id}/deploy")
+@ml_router.get("/model_versions/{model_version_id}/status")
+async def get_model_version_status(model_version_id: int):
+    """get model_version status from sagemaker directly to avoid having
+    to keep the db in sync with sagemaker
+
+    Args:
+        model_version_id (int): the id of the model version
+
+    Raises:
+        HTTPException: 500 if the model version is not found
+
+    Returns:
+        ModelVersionStatus: the status of the model version
+    """
+    model_version_status = await retrieve_model_version_status(model_version_id)
+
+    return JSONResponse({"status": model_version_status})
+
+
+@ml_router.get("/model_versions/{model_version_id}/deploy")
 async def deploy_model_version(model_version_id: int):
     # Getting status of the model version
     model_version_status = await get_model_version_status(model_version_id)
@@ -358,7 +397,7 @@ async def deploy_model_version(model_version_id: int):
         model_data=model_data,
         role=aws_role,
         entry_point="script.py",
-        source_dir="s3://maio-sagemaker/code/code.tar.gz",
+        source_dir="s3://maio-sagemaker/code_deploy/code.tar.gz",
         code_location="s3://maio-sagemaker/code_location/",
         framework_version="2.0.0",
         py_version="py310",
@@ -373,7 +412,7 @@ async def deploy_model_version(model_version_id: int):
     return JSONResponse({"status": ModelVersionStatus.CreatingEndpoint})
 
 
-@merlion_router.get("/model_versions/{model_version_id}/undeploy")
+@ml_router.get("/model_versions/{model_version_id}/undeploy")
 async def undeploy_model_version(model_version_id: int):
     # Getting status of the model version
     model_version_status = await get_model_version_status(model_version_id)
@@ -405,7 +444,7 @@ async def undeploy_model_version(model_version_id: int):
     return JSONResponse({"status": ModelVersionStatus.DeletingEndpoint})
 
 
-@merlion_router.post("/model_versions/{model_version_id}/predict")
+@ml_router.post("/model_versions/{model_version_id}/predict")
 async def model_versions_predict(model_version_id: int, dt: datetime):
     model_version_status = await get_model_version_status(model_version_id)
 
@@ -451,5 +490,111 @@ async def model_versions_predict(model_version_id: int, dt: datetime):
     # data = response["Body"].read().decode("utf-8")
 
     # anom_score = pd.read_json(json.loads(data), orient="split")
+
+    return JSONResponse({"status": True})
+
+
+@ml_router.post(
+    "/model_versions/{model_version_id}/schedule", response_model=ModelSchedulerRead
+)
+async def schedule_model_version(
+    model_version_id: int, model_scheduler: ModelSchedulerCreate
+):
+    with Session(engine) as session:
+        model_version = session.get(ModelVersion, model_version_id)
+        if not model_version:
+            raise HTTPException(status_code=500, detail="ModelVersion not found")
+
+        # check if model version is deployed
+        model_version_status = await retrieve_model_version_status(model_version_id)
+
+        if model_version_status != ModelVersionStatus.InServiceEndpoint:
+            raise HTTPException(
+                status_code=500,
+                detail="ModelVersion not deployed yet. Please deploy the model first.",
+            )
+
+        model_scheduler.model_version_id = model_version_id
+        db_model_scheduler = ModelScheduler.from_orm(model_scheduler)
+        session.add(db_model_scheduler)
+        session.commit()
+        session.refresh(db_model_scheduler)
+
+        lambda_function_arn = os.getenv(
+            "LAMBDA_FUNCTION_ARN",
+            "arn:aws:lambda:eu-west-1:146915812621:function:test_func_v2",
+        )
+
+        event_client = boto3.client("events")
+        # if seconds_to_repeat = set to current time
+
+        payload = {
+            "datasource_id": db_model_scheduler.datasource_id,
+            "token": model_version.algorithm_parameters["maio_token"],
+            "endpoint": model_version.job_name,
+            "start_time": datetime.strftime(
+                db_model_scheduler.start_time, "%Y-%m-%dT%H:%M:%S.%fZ"
+            ),
+        }
+
+        if db_model_scheduler.seconds_to_repeat == 0:
+            # TODO: call the lambda function immediately
+            return db_model_scheduler
+
+        rate = f"rate({db_model_scheduler.seconds_to_repeat // 60} minutes)"
+
+        response = event_client.put_rule(
+            Name=f"{db_model_scheduler.model_version.job_name}_{db_model_scheduler.id}",
+            ScheduleExpression=rate,  # Set the desired interval
+            State="ENABLED",
+        )
+
+        # Create the target for the rule
+        target = {
+            "Id": f"{db_model_scheduler.model_version.job_name}_{db_model_scheduler.id}",
+            "Arn": lambda_function_arn,
+            "Input": json.dumps(payload),  # Set the desired payload for each invocation
+        }
+
+        # Add the target to the rule
+        event_client.put_targets(
+            Rule=f"{db_model_scheduler.model_version.job_name}_{db_model_scheduler.id}",
+            Targets=[target],
+        )
+
+        # Add permission for CloudWatch Events to invoke the Lambda function
+        lambda_client = boto3.client("lambda")
+        lambda_client.add_permission(
+            FunctionName=lambda_function_arn.split(":")[-1],
+            StatementId=f"{db_model_scheduler.model_version.job_name}_{db_model_scheduler.id}",
+            Action="lambda:InvokeFunction",
+            Principal="events.amazonaws.com",
+            SourceArn=response["RuleArn"],
+        )
+
+        print("CloudWatch Event rule created successfully.")
+
+    return db_model_scheduler
+
+
+@ml_router.delete("/model_schedulers/{model_scheduler_id}")
+async def delete_schedule(model_scheduler_id: int):
+    with Session(engine) as session:
+        model_scheduler = session.get(ModelScheduler, model_scheduler_id)
+        if model_scheduler is None:
+            raise HTTPException(status_code=500, detail="ModelScheduler not found")
+
+        event_client = boto3.client("events")
+        event_client.remove_targets(
+            Rule=f"{model_scheduler.model_version.job_name}_{model_scheduler.id}",
+            Ids=[f"{model_scheduler.model_version.job_name}_{model_scheduler.id}"],
+        )
+
+        event_client.delete_rule(
+            Name=f"{model_scheduler.model_version.job_name}_{model_scheduler.id}"
+        )
+
+        session.delete(model_scheduler)
+        session.commit()
 
     return JSONResponse({"status": True})

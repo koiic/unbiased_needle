@@ -90,4 +90,3 @@ curl -X 'GET' \
   -H 'accept: application/json'
 
 ```
-

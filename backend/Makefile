@@ -1,21 +1,26 @@
 .PHONY: list
 
-list: ## List all targets
-	@echo "Available targets:"
-	@echo
-	@awk '/^[a-zA-Z\-\_0-9]+:/ { \
-		helpMessage = match(lastLine, /^## (.*)/); \
-		if (helpMessage) { \
-			helpCommand = substr($$1, 0, index($$1, ":")); \
-			helpMessage = substr(lastLine, RSTART + 3, RLENGTH); \
-			printf "  \033[36m%-30s\033[0m %s\n", helpCommand, helpMessage; \
-		} \
-	} \
-	{ lastLine = $$0 }' $(MAKEFILE_LIST)
+AWS_REGION := $(shell eval "aws --profile default configure get region")
+IMAGE_TAG := latest ## $(shell eval "git rev-parse --short HEAD")
+ECR_NAME := maio-ml_api_repository ## $(shell eval "aws --profile default ecr describe-repositories --repository-names maio-ml | jq -r '.repositories[0].repositoryUri'")
 
-clean: ## Clean up
-	rm -rf logs/*
+IMAGE_NAME := maio-ml_api_container
 
-run_api:
-	@echo "Running API"
-	@uvicorn app:app --reload
+REGISTRY_ID := $(shell aws ecr describe-repositories --query 'repositories[?repositoryName==`'$(IMAGE_NAME)'`].registryId' --output text)
+
+IMAGE_URI := $(REGISTRY_ID).dkr.ecr.$(AWS_REGION).amazonaws.com
+
+parameters:
+	@echo "AWS_REGION: ${AWS_REGION}"
+	@echo "IMAGE_TAG: ${IMAGE_TAG}"
+	@echo "ECR_NAME: ${ECR_NAME}"
+	@echo "IMAGE_NAME: ${IMAGE_NAME}"
+	@echo "REGISTRY_ID: ${REGISTRY_ID}"
+	@echo "IMAGE_URI: ${IMAGE_URI}"
+
+deploy:
+	@echo "Login to the ECR repository"
+	aws ecr get-login-password --region $(AWS_REGION) | docker login --username AWS --password-stdin $(IMAGE_URI)
+
+	@echo "Building and pushing the container"
+	@docker build -t $(IMAGE_URI)/$(IMAGE_NAME) . && docker push $(IMAGE_URI)/$(IMAGE_NAME):$(IMAGE_TAG)
